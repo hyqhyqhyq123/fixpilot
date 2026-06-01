@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import fix_tasks as fix_tasks_router
+from app.api.routes import issue_analysis as issue_analysis_router
 from app.core.config import get_settings
 from app.db.session import init_db
 
@@ -75,8 +76,9 @@ app.add_middleware(
 # 访问 http://localhost:8000/health 看到 {"status": "ok"} 就说明服务跑起来了
 
 # 注册任务路由
-# include_router 把 fix_tasks_router 里所有的接口都挂载到 app 上
 app.include_router(fix_tasks_router.router)
+# 注册 Issue 分析路由
+app.include_router(issue_analysis_router.router)
 
 
 @app.get("/health", tags=["system"])

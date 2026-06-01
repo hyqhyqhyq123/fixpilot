@@ -12,7 +12,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, String, Text, func
+from sqlalchemy import DateTime, Enum, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -32,12 +32,12 @@ class TaskStatus(str, enum.Enum):
                        → failed
                        → cancelled
     """
-    PENDING = "pending"                  # 任务刚创建，还没开始
-    RUNNING = "running"                  # Agent 正在运行
+    PENDING = "pending"                    # 任务刚创建，还没开始
+    RUNNING = "running"                    # Agent 正在运行
     WAITING_APPROVAL = "waiting_approval"  # 等待用户审批修改计划
-    SUCCESS = "success"                  # 全部完成
-    FAILED = "failed"                    # 执行失败
-    CANCELLED = "cancelled"              # 用户取消
+    SUCCESS = "success"                    # 全部完成
+    FAILED = "failed"                      # 执行失败
+    CANCELLED = "cancelled"                # 用户取消
 
 
 class FixTask(Base):
@@ -48,50 +48,66 @@ class FixTask(Base):
     Mapped[xxx] 是 SQLAlchemy 2.0 的新写法，表示列的 Python 类型。
     mapped_column() 定义列的数据库属性（类型、是否必须、默认值等）。
     """
-    __tablename__ = "fix_tasks"  # 数据库中的表名
+    __tablename__ = "fix_tasks"
 
     # ── 主键 ──────────────────────────────────────────────────
-    # 使用自增整数作为主键，简单可靠
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
-    # ── 任务输入 ───────────────────────────────────────────────
-    # repo_url: 用户提交的 GitHub 仓库地址
+    # ── 任务输入（用户提交的内容）─────────────────────────────
     repo_url: Mapped[str] = mapped_column(String(500), nullable=False)
 
-    # issue_text: 用户描述的问题，可能很长，用 Text 类型（无长度限制）
+    # issue_url：用户可以直接粘贴 GitHub Issue 的 URL
+    # 例如 https://github.com/pallets/flask/issues/123
+    # MVP 中暂时只作记录，不自动拉取 issue 内容（V1 功能）
+    issue_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     issue_text: Mapped[str] = mapped_column(Text, nullable=False)
 
-    # ── 任务状态 ───────────────────────────────────────────────
-    # status: 当前任务阶段，用枚举限制合法值，防止乱填
+    # base_branch：要在哪个分支上修改代码，默认 main
+    # 后续 Coder Agent 会基于这个分支创建新分支并提交
+    base_branch: Mapped[str] = mapped_column(String(100), nullable=False, default="main")
+
+    # ── 用户自定义命令（可选，Agent 会自动检测，也可以手动指定）──
+    # 为什么让用户填？有些项目测试命令不标准，Agent 自动检测可能不准
+    test_command: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    lint_command: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    # ── 重试配置 ────────────────────────────────────────────
+    # retry_count：当前已重试次数，每次 Coder + Tester 失败后 +1
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # max_retries：允许最多重试几次，默认 2 次
+    # 为什么有上限：防止 Agent 无限循环越修越错
+    max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+
+    # ── 任务状态 ────────────────────────────────────────────
     status: Mapped[TaskStatus] = mapped_column(
-        Enum(TaskStatus, name="task_status"),  # name 是数据库中枚举类型的名字
+        Enum(TaskStatus, name="task_status"),
         default=TaskStatus.PENDING,
         nullable=False,
     )
 
-    # ── Agent 运行信息 ─────────────────────────────────────────
-    # current_agent: 当前正在运行的 Agent 名称（如 "IssueAnalystAgent"）
-    # 为什么要记录：方便前端显示"当前在做什么"，也方便调试
+    # ── Agent 运行信息 ──────────────────────────────────────
     current_agent: Mapped[str | None] = mapped_column(String(100), nullable=True)
-
-    # current_node: LangGraph 中当前所在的节点名称（如 "analyze_issue"）
-    # 为什么要记录：比 current_agent 更细粒度，可以精确知道 workflow 走到哪一步
     current_node: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
-    # ── 错误信息 ───────────────────────────────────────────────
-    # 任务失败时，记录错误信息方便排查
+    # ── 运行结果 ────────────────────────────────────────────
+    # workspace_path：clone 下来的代码存放在哪个目录
+    # 存进数据库的原因：任务中断后可以恢复，知道代码在哪
+    workspace_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # final_report：任务完成后由 PR Writer 生成的最终报告（Markdown 格式）
+    final_report: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # error_message：任务失败时记录错误信息
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # ── 时间戳 ────────────────────────────────────────────────
-    # server_default=func.now() 表示插入时由数据库自动填入当前时间
-    # 为什么用数据库时间而不是 Python 时间：多个服务器时时钟一致，数据库时间更可靠
+    # ── 时间戳 ──────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
     )
-
-    # onupdate=func.now() 表示每次更新记录时自动刷新时间
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -100,5 +116,4 @@ class FixTask(Base):
     )
 
     def __repr__(self) -> str:
-        """让 print(task) 输出有意义的内容，方便调试。"""
         return f"<FixTask id={self.id} status={self.status} repo={self.repo_url}>"

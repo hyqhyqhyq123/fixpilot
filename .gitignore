@@ -29,3 +29,6 @@ Thumbs.db
 
 # Docker 临时文件
 *.log
+
+# 任务 workspace（包含克隆的仓库，不应提交）
+workspaces/

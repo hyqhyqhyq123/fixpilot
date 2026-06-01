@@ -56,7 +56,12 @@ async def create_task(
     # 创建 SQLAlchemy 模型对象（还没写入数据库）
     task = FixTask(
         repo_url=payload.repo_url,
+        issue_url=payload.issue_url,
         issue_text=payload.issue_text,
+        base_branch=payload.base_branch,
+        test_command=payload.test_command,
+        lint_command=payload.lint_command,
+        max_retries=payload.max_retries,
         status=TaskStatus.PENDING,
     )
 
