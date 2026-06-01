@@ -1,0 +1,33 @@
+# docker-compose.yml
+# 作用：用一个命令启动本地开发所需的所有服务（PostgreSQL + Redis）
+# 为什么需要它：开发时不想在本机直接安装数据库，用 Docker 容器更干净，
+#              每个人电脑上跑起来的环境都一样。
+
+version: "3.9"
+
+services:
+
+  # PostgreSQL：关系型数据库，用来存任务、Agent 步骤、工具调用记录等
+  postgres:
+    image: postgres:15
+    container_name: fixpilot_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fixpilot
+      POSTGRES_PASSWORD: fixpilot123
+      POSTGRES_DB: fixpilot_db
+    ports:
+      - "5432:5432"          # 把容器内 5432 端口映射到宿主机 5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # 数据持久化，重启不丢数据
+
+  # Redis：内存数据库，用来做任务队列（Celery）和缓存
+  redis:
+    image: redis:7-alpine
+    container_name: fixpilot_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:  # 命名卷，由 Docker 管理，数据不会因为容器删除而丢失

@@ -1,0 +1,39 @@
+# requirements.txt
+# 项目所有 Python 依赖，使用 pip install -r requirements.txt 一次性安装
+# 版本已升级到 LangChain 1.x 体系（2026年最新稳定版），避免依赖冲突
+
+# ── Web 框架 ──────────────────────────────────────────────
+fastapi==0.115.0          # Web 框架，用来写 API 接口
+uvicorn[standard]==0.30.6 # ASGI 服务器，让 FastAPI 能跑起来
+python-multipart==0.0.9   # 支持 form 表单上传
+
+# ── 数据库 ────────────────────────────────────────────────
+sqlalchemy==2.0.35        # ORM：把 Python 对象映射成数据库表，不用手写 SQL
+alembic==1.13.3           # 数据库迁移工具，管理表结构变更
+asyncpg==0.30.0           # PostgreSQL 异步驱动
+psycopg2-binary==2.9.10   # PostgreSQL 同步驱动（Alembic 需要）
+
+# ── 数据校验 ──────────────────────────────────────────────
+pydantic==2.9.2           # 数据验证和序列化，LangGraph State 也用它
+pydantic-settings==2.5.2  # 从 .env 文件读配置
+
+# ── 认证 ──────────────────────────────────────────────────
+python-jose[cryptography]==3.3.0  # JWT token 生成和验证
+passlib[bcrypt]==1.7.4            # 密码哈希
+
+# ── 任务队列 ──────────────────────────────────────────────
+celery==5.4.0             # 后台异步任务，Agent workflow 在后台跑
+redis==5.0.8              # Celery 的 broker（消息队列）
+
+# ── AI / Agent ────────────────────────────────────────────
+# 注意：使用 1.x 版本体系，与 langchain-deepseek、langchain-tavily 等新包兼容
+langchain==1.3.2          # LangChain：封装 LLM 调用和工具调用
+langchain-openai==1.2.2   # OpenAI 兼容接口（DeepSeek 也用这个）
+langgraph==1.2.2          # LangGraph：构建多节点 Agent workflow
+
+# ── Git 操作 ──────────────────────────────────────────────
+gitpython==3.1.43         # 用 Python 操作 Git（clone、diff 等）
+
+# ── 工具 ──────────────────────────────────────────────────
+python-dotenv==1.0.1      # 读取 .env 文件
+httpx==0.27.2             # 异步 HTTP 客户端

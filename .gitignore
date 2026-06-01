@@ -1,0 +1,31 @@
+# 环境变量（含 API 密钥，绝对不能提交）
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Node.js（前端后续会用到）
+node_modules/
+.next/
+out/
+
+# 编辑器
+.vscode/
+.idea/
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# Docker 临时文件
+*.log
