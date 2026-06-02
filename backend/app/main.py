@@ -11,6 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import fix_tasks as fix_tasks_router
 from app.api.routes import issue_analysis as issue_analysis_router
+from app.api.routes import code_retrieval as code_retrieval_router
+from app.api.routes import planner as planner_router
 from app.core.config import get_settings
 from app.db.session import init_db
 
@@ -79,6 +81,10 @@ app.add_middleware(
 app.include_router(fix_tasks_router.router)
 # 注册 Issue 分析路由
 app.include_router(issue_analysis_router.router)
+# 注册代码检索路由（阶段5）
+app.include_router(code_retrieval_router.router)
+# 注册 Planner 路由（阶段6）
+app.include_router(planner_router.router)
 
 
 @app.get("/health", tags=["system"])
