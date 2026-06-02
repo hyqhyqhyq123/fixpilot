@@ -8,13 +8,14 @@
 #   2. 用 LLM 理解并分析
 #   3. 按固定格式输出结构化结果
 #
-# with_structured_output 是什么？
-# LangChain 提供的功能，它把 Pydantic 类转成 JSON Schema 发给 LLM，
-# 要求 LLM 严格按这个 Schema 输出 JSON，然后自动解析成 Pydantic 对象。
-# 这样我们就不用自己解析 LLM 的自由文本了。
+# 为什么用 json_mode 而不是 function calling？
+# DeepSeek 思考模式不支持 tool_choice=required（function calling 的底层机制），
+# 改用 json_mode：在提示词里告诉 LLM "请输出 JSON"，
+# LLM 返回 JSON 字符串后，用 Pydantic 解析成结构化对象。
 
+import json
 import logging
-from typing import Optional
+import re
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -25,8 +26,8 @@ from app.schemas.issue_analysis import IssueAnalysisResult, IssueAnalysisRequest
 logger = logging.getLogger(__name__)
 
 # ── 系统提示词（System Prompt）────────────────────────────────────────
-# 系统提示词告诉 LLM "你是谁、你的职责是什么"。
-# 写好系统提示词是让 Agent 输出稳定、准确的关键。
+# 直接在提示词里写出 JSON 格式要求，让 LLM 明确知道输出什么结构。
+# 这比依赖 function calling 机制更兼容不同的 LLM。
 
 SYSTEM_PROMPT = """你是 FixPilot 系统的 Issue Analyst Agent，专门分析 GitHub Issue。
 
@@ -42,16 +43,33 @@ SYSTEM_PROMPT = """你是 FixPilot 系统的 Issue Analyst Agent，专门分析 
 - 保持客观，不要假设没有描述的内容
 - 验收条件必须具体可测试，不能模糊
 - 风险等级要基于改动范围和影响面来判断
-- 如果 issue 信息严重不足（比如只有一句话且缺少复现步骤），设 needs_user_clarification=true
+- 如果 issue 信息严重不足（比如只有一句话且缺少复现步骤），设 needs_user_clarification 为 true
 
 语言要求：
 - 所有字段内容统一使用中文输出
 - 技术名词可以保留英文（如函数名、库名）
-"""
+
+输出要求：
+你必须只输出一个合法的 JSON 对象，不要有任何其他文字，格式如下：
+{{
+  "issue_type": "bug | feature | documentation | refactor | test | unknown（选一个）",
+  "summary": "1-2句话总结核心问题",
+  "expected_behavior": "期望的正确行为",
+  "actual_behavior": "实际发生的错误行为",
+  "acceptance_criteria": ["验收条件1", "验收条件2"],
+  "risk_level": "low | medium | high（选一个）",
+  "needs_user_clarification": true 或 false,
+  "clarification_questions": ["问题1（仅 needs_user_clarification=true 时填写）"]
+}}
+
+JSON 格式严格要求（必须遵守）：
+- 所有字段名和字符串值必须用英文双引号包裹
+- 字符串内容里如果包含双引号，必须用反斜杠转义：\"
+- 不要在字符串中使用未转义的双引号，否则 JSON 无法解析
+- 正确示例：{{"summary": "点击\\"提交\\\"按钮后报错"}}
+- 错误示例：{{"summary": "点击"提交"按钮后报错"}}"""
 
 # ── 用户消息模板 ──────────────────────────────────────────────────────
-# {issue_text} 和 {repo_context} 是占位符，调用时会被实际内容替换
-
 USER_PROMPT_TEMPLATE = """请分析以下 GitHub Issue：
 
 ## Issue 内容
@@ -59,7 +77,7 @@ USER_PROMPT_TEMPLATE = """请分析以下 GitHub Issue：
 
 {repo_context_section}
 
-请按照要求的 JSON 格式输出分析结果。"""
+请直接输出 JSON，不要有任何其他文字。"""
 
 
 def _build_repo_context_section(repo_context: str) -> str:
@@ -80,11 +98,6 @@ def create_issue_analyst_llm() -> ChatOpenAI:
     """
     创建用于 Issue 分析的 LLM 实例。
     
-    为什么单独封装成函数？
-    - 方便测试时替换（mock）
-    - 配置变更只改这一处
-    - 可以按需设置不同的 temperature（创造性程度）
-    
     temperature=0 的含义：
     - 0 = 确定性输出，每次结果稳定一致（适合结构化分析任务）
     - 1 = 更有创造性，但结果不稳定（适合写文章、头脑风暴）
@@ -94,18 +107,131 @@ def create_issue_analyst_llm() -> ChatOpenAI:
         model=settings.model_name,
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
-        temperature=0,  # 结构化输出任务用 0，保证稳定性
+        temperature=0,
     )
+
+
+def _extract_json_block(content: str) -> str:
+    """
+    从 LLM 输出中提取 JSON 部分。
+    
+    LLM 有时会在 JSON 前后加额外文字或用 ```json``` 包裹，
+    这里做防御性处理，只保留 { ... } 的部分。
+    """
+    content = content.strip()
+
+    # 情况1：```json ... ``` 包裹
+    if content.startswith("```"):
+        lines = content.split("\n")
+        end = -1 if lines[-1].strip() == "```" else len(lines)
+        content = "\n".join(lines[1:end]).strip()
+
+    # 情况2：JSON 前后有多余文字，只取第一个 { 到最后一个 } 之间的内容
+    start = content.find("{")
+    end = content.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        content = content[start:end + 1]
+
+    return content
+
+
+def _fix_unescaped_quotes_in_values(json_str: str) -> str:
+    """
+    修复 JSON 字符串值中未转义的双引号。
+    
+    为什么需要这个？
+    LLM 有时把原始文本里的引号（如"提交订单"）直接放进 JSON 字符串，
+    没有转义成 \\\"，导致 JSON 解析失败。
+    
+    处理策略：
+    逐字符扫描，追踪当前是否在 JSON 字符串内，
+    遇到"字符串内部的未转义双引号"就替换成 \\\"。
+    """
+    result = []
+    in_string = False      # 当前是否在 JSON 字符串值内部
+    i = 0
+
+    while i < len(json_str):
+        char = json_str[i]
+        prev_char = json_str[i - 1] if i > 0 else ""
+
+        if char == '"' and prev_char != "\\":
+            if not in_string:
+                # 遇到开引号，进入字符串模式
+                in_string = True
+                result.append(char)
+            else:
+                # 在字符串内部遇到双引号
+                # 判断：这是合法的结束引号，还是内容里的非法引号？
+                # 合法结束引号后面应该是：空白、,、}、]
+                rest = json_str[i + 1:].lstrip()
+                if rest and rest[0] in (",", "}", "]", "\n", "\r", " ", ""):
+                    # 看起来是字符串结束，正常处理
+                    in_string = False
+                    result.append(char)
+                else:
+                    # 字符串内部的非法引号，转义它
+                    result.append('\\"')
+        else:
+            result.append(char)
+
+        i += 1
+
+    return "".join(result)
+
+
+def _parse_llm_json_output(raw_content: str) -> IssueAnalysisResult:
+    """
+    解析 LLM 返回的 JSON 字符串为 IssueAnalysisResult 对象。
+    
+    两步防御：
+    1. 先尝试直接解析（LLM 输出正确时直接成功）
+    2. 失败后尝试修复常见问题（字符串内未转义的引号）再解析
+    
+    参数:
+        raw_content: LLM 返回的原始文本
+    
+    返回:
+        IssueAnalysisResult: 解析后的结构化对象
+    
+    异常:
+        ValueError: 两次尝试都失败时抛出
+    """
+    content = _extract_json_block(raw_content)
+
+    # 第一次尝试：直接解析
+    try:
+        data = json.loads(content)
+        return IssueAnalysisResult(**data)
+    except json.JSONDecodeError:
+        pass  # 解析失败，进入修复流程
+    except Exception as e:
+        raise ValueError(f"JSON 字段不符合预期结构：{e}")
+
+    # 第二次尝试：修复未转义引号后再解析
+    logger.warning("JSON 直接解析失败，尝试自动修复未转义引号...")
+    fixed_content = _fix_unescaped_quotes_in_values(content)
+
+    try:
+        data = json.loads(fixed_content)
+        return IssueAnalysisResult(**data)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"LLM 返回的内容不是合法 JSON：{e}\n"
+            f"原始内容（前300字）：{raw_content[:300]}"
+        )
+    except Exception as e:
+        raise ValueError(f"JSON 字段不符合预期结构：{e}")
 
 
 def analyze_issue(request: IssueAnalysisRequest) -> IssueAnalysisResult:
     """
     分析 GitHub Issue，返回结构化分析结果。
     
-    这是 Issue Analyst Agent 的核心函数，整体流程：
+    整体流程：
     1. 构建提示词（把 issue 文本填入模板）
-    2. 创建 LLM 并绑定输出结构（with_structured_output）
-    3. 调用 LLM，自动获得 IssueAnalysisResult 对象
+    2. 调用 LLM，要求输出 JSON
+    3. 解析 JSON 为 IssueAnalysisResult 对象
     4. 记录日志，返回结果
     
     参数:
@@ -123,33 +249,30 @@ def analyze_issue(request: IssueAnalysisRequest) -> IssueAnalysisResult:
     # ── 第 1 步：构建完整的提示词 ──
     repo_context_section = _build_repo_context_section(request.repo_context)
 
-    # ChatPromptTemplate 是 LangChain 的提示词模板工具
-    # from_messages 接收消息列表，区分 system（系统）和 human（用户）角色
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_PROMPT),
         ("human", USER_PROMPT_TEMPLATE),
     ])
 
-    # ── 第 2 步：创建 LLM 并绑定输出结构 ──
+    # ── 第 2 步：创建 LLM ──
     llm = create_issue_analyst_llm()
 
-    # with_structured_output(IssueAnalysisResult) 做了什么？
-    # 1. 把 IssueAnalysisResult 的所有字段和描述转成 JSON Schema
-    # 2. 通过 function calling 或 json_mode 发给 LLM
-    # 3. LLM 返回的 JSON 自动被解析成 IssueAnalysisResult 实例
-    # 这样我们就不需要写任何解析代码！
-    structured_llm = llm.with_structured_output(IssueAnalysisResult)
-
-    # ── 第 3 步：组装成 Chain 并调用 ──
-    # LangChain 的 | 管道操作符：把 prompt 的输出接到 llm 的输入
-    # prompt | structured_llm 等价于：structured_llm.invoke(prompt.format(...))
-    chain = prompt | structured_llm
-
     try:
-        result: IssueAnalysisResult = chain.invoke({
-            "issue_text": request.issue_text,
-            "repo_context_section": repo_context_section,
-        })
+        # ── 第 3 步：把变量填入提示词模板，得到真实的消息列表 ──
+        messages = prompt.format_messages(
+            issue_text=request.issue_text,
+            repo_context_section=repo_context_section,
+        )
+
+        # ── 第 4 步：把消息发给 LLM，等待回复 ──
+        response = llm.invoke(messages)
+
+        # response.content 是 LLM 返回的文本内容
+        raw_content = response.content
+        logger.debug(f"LLM 原始输出：{raw_content[:300]}")
+
+        # ── 第 5 步：解析 JSON ──
+        result = _parse_llm_json_output(raw_content)
 
         logger.info(
             f"Issue 分析完成："
@@ -159,6 +282,9 @@ def analyze_issue(request: IssueAnalysisRequest) -> IssueAnalysisResult:
         )
         return result
 
+    except ValueError:
+        # 解析失败，直接向上抛出
+        raise
     except Exception as e:
         logger.error(f"Issue 分析失败：{e}")
         raise
