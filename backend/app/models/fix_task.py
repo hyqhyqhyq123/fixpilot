@@ -1,13 +1,9 @@
 # backend/app/models/fix_task.py
-# 作用：定义 fix_tasks 数据库表的结构（SQLAlchemy ORM 模型）
+# 作用：定义 fix_tasks 数据库表（对齐需求文档第 11.2 节）
 #
 # ORM 是什么？
 # ORM（Object-Relational Mapping）= 对象关系映射
-# 它的作用是：让你用 Python 类和对象操作数据库，而不用手写 SQL
-# 例如：task = FixTask(repo_url="...") 然后 db.add(task)
-# ORM 会自动把它变成 INSERT INTO fix_tasks (...) VALUES (...)
-#
-# SQLAlchemy 是 Python 最流行的 ORM 框架
+# 让你用 Python 类操作数据库，不用手写 SQL。
 
 import enum
 from datetime import datetime
@@ -21,10 +17,6 @@ from app.db.base import Base
 class TaskStatus(str, enum.Enum):
     """
     任务状态枚举。
-
-    继承 str 的原因：
-    - 让状态值既是字符串又是枚举，序列化到 JSON 时直接输出字符串（如 "pending"）
-    - 不继承 str 的话，JSON 序列化会报错或输出 "TaskStatus.pending"
 
     状态流转图：
     pending → running → waiting_approval → running → success
@@ -42,43 +34,26 @@ class TaskStatus(str, enum.Enum):
 
 class FixTask(Base):
     """
-    fix_tasks 数据库表的模型定义。
+    fix_tasks 数据库表（对齐需求文档 11.2 节）。
 
-    每个字段对应表中的一列。
-    Mapped[xxx] 是 SQLAlchemy 2.0 的新写法，表示列的 Python 类型。
-    mapped_column() 定义列的数据库属性（类型、是否必须、默认值等）。
+    字段说明见需求文档表格，每个字段都有对应的用途注释。
     """
     __tablename__ = "fix_tasks"
 
     # ── 主键 ──────────────────────────────────────────────────
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
-    # ── 任务输入（用户提交的内容）─────────────────────────────
-    repo_url: Mapped[str] = mapped_column(String(500), nullable=False)
-
-    # issue_url：用户可以直接粘贴 GitHub Issue 的 URL
-    # 例如 https://github.com/pallets/flask/issues/123
-    # MVP 中暂时只作记录，不自动拉取 issue 内容（V1 功能）
-    issue_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-
+    # ── 任务输入 ───────────────────────────────────────────────
+    repo_url: Mapped[str] = mapped_column(Text, nullable=False)
+    issue_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     issue_text: Mapped[str] = mapped_column(Text, nullable=False)
 
-    # base_branch：要在哪个分支上修改代码，默认 main
-    # 后续 Coder Agent 会基于这个分支创建新分支并提交
+    # base_branch：要修改的基础分支，默认 main
     base_branch: Mapped[str] = mapped_column(String(100), nullable=False, default="main")
 
-    # ── 用户自定义命令（可选，Agent 会自动检测，也可以手动指定）──
-    # 为什么让用户填？有些项目测试命令不标准，Agent 自动检测可能不准
-    test_command: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    lint_command: Mapped[str | None] = mapped_column(String(200), nullable=True)
-
-    # ── 重试配置 ────────────────────────────────────────────
-    # retry_count：当前已重试次数，每次 Coder + Tester 失败后 +1
-    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
-    # max_retries：允许最多重试几次，默认 2 次
-    # 为什么有上限：防止 Agent 无限循环越修越错
-    max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    # 用户可选手动指定，Agent 也会自动检测
+    test_command: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    lint_command: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # ── 任务状态 ────────────────────────────────────────────
     status: Mapped[TaskStatus] = mapped_column(
@@ -91,15 +66,19 @@ class FixTask(Base):
     current_agent: Mapped[str | None] = mapped_column(String(100), nullable=True)
     current_node: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
-    # ── 运行结果 ────────────────────────────────────────────
-    # workspace_path：clone 下来的代码存放在哪个目录
-    # 存进数据库的原因：任务中断后可以恢复，知道代码在哪
+    # ── 重试配置 ────────────────────────────────────────────
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+
+    # ── workspace 路径 ────────────────────────────────────
+    # clone 下来的代码存在这里，Agent 在这里读写文件
     workspace_path: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # final_report：任务完成后由 PR Writer 生成的最终报告（Markdown 格式）
+    # ── 最终输出 ───────────────────────────────────────────
+    # PR Writer 生成的 Markdown 格式最终报告
     final_report: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # error_message：任务失败时记录错误信息
+    # 任务失败时的错误信息
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # ── 时间戳 ──────────────────────────────────────────────

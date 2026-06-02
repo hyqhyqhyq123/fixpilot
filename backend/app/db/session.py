@@ -71,10 +71,17 @@ async def init_db() -> None:
     - create_all 会扫描 Base.metadata 里的所有表定义并创建
     """
     # 延迟 import，避免循环导入
+    # noqa: F401 — import 是为了注册模型到 Base.metadata，不是为了直接使用
     from app.db.base import Base
-    import app.models.fix_task  # noqa: F401 — import 是为了注册模型，不是为了使用
+    import app.models.fix_task           # noqa: F401
+    import app.models.agent_step         # noqa: F401
+    import app.models.tool_call          # noqa: F401
+    import app.models.retrieved_context  # noqa: F401
+    import app.models.edit_history       # noqa: F401
+    import app.models.test_run           # noqa: F401
+    import app.models.approval           # noqa: F401
 
     async with engine.begin() as conn:
         # checkfirst=True 表示"表不存在才创建"，不会删除已有数据
         await conn.run_sync(Base.metadata.create_all)
-        logger.info("数据库表初始化完成")
+        logger.info("数据库表初始化完成（共 7 张表）")
