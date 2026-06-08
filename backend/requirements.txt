@@ -14,7 +14,7 @@ asyncpg==0.30.0           # PostgreSQL 异步驱动
 psycopg2-binary==2.9.10   # PostgreSQL 同步驱动（Alembic 需要）
 
 # ── 数据校验 ──────────────────────────────────────────────
-pydantic==2.9.2           # 数据验证和序列化，LangGraph State 也用它
+pydantic==2.13.4          # 数据验证和序列化，LangGraph State 也用它（LlamaIndex 需要 >=2.10）
 pydantic-settings==2.5.2  # 从 .env 文件读配置
 
 # ── 认证 ──────────────────────────────────────────────────
@@ -30,6 +30,12 @@ redis==5.0.8              # Celery 的 broker（消息队列）
 langchain==1.3.2          # LangChain：封装 LLM 调用和工具调用
 langchain-openai==1.2.2   # OpenAI 兼容接口（DeepSeek 也用这个）
 langgraph==1.2.2          # LangGraph：构建多节点 Agent workflow
+
+# ── 语义检索（LlamaIndex）────────────────────────────────
+# llama-index-core：核心索引、Document、VectorStoreIndex、Settings
+# llama-index-embeddings-openai：使用 OpenAI text-embedding-3-small 向量化代码
+llama-index-core==0.14.22
+llama-index-embeddings-openai==0.6.0
 
 # ── Git 操作 ──────────────────────────────────────────────
 gitpython==3.1.43         # 用 Python 操作 Git（clone、diff 等）

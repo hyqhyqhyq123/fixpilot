@@ -1,4 +1,48 @@
-# FixPilot：基于 LangGraph 的多 Agent Coding 系统需求文档
+# FixPilot V2 需求规格
+
+> **文档版本**：V2.0  
+> **最后更新**：2026-06-07  
+> **说明**：本文档为 FixPilot 统一需求规格，不再区分 MVP / V1。所有条目均为 V2 目标交付范围。
+
+---
+
+## 0. 实现状态图例
+
+| 标记 | 含义 |
+|---|---|
+| ✅ 已完成 | 代码已实现，可独立测试 |
+| 🔄 进行中 | 部分实现（表/Schema/Tool 有，Agent 或串联未完成） |
+| ⏳ 待做 | 尚未开始或仅有设计 |
+
+**实现状态总览（截至 2026-06-05）**
+
+| 模块 | 状态 | 说明 |
+|---|---|---|
+| 后端骨架（FastAPI + Config + Docker Compose） | ✅ 已完成 | health、CORS、PostgreSQL、Redis |
+| 任务系统（fix_tasks CRUD） | ✅ 已完成 | 创建/列表/详情/取消 |
+| 数据库模型（8 张表） | ✅ 已完成 | 模型已建，部分未写入业务逻辑 |
+| Issue Analyst Agent | ✅ 已完成 | Agent + API + Schema |
+| Code Retriever Agent | ✅ 已完成 | semantic + keyword + hybrid + LlamaIndex |
+| Planner Agent | ✅ 已完成 | Agent + API + Schema |
+| Repository Analyst（Tools） | 🔄 进行中 | clone + 分析 tool 有，独立 Agent 未封装 |
+| LangGraph Workflow | ⏳ 待做 | FixPilotState + 13 Node 未实现 |
+| 上下文持久化（State → DB） | ⏳ 待做 | retrieved_contexts / agent_steps 未接入 Agent |
+| 人工审批 API | ⏳ 待做 | approval 表有，approve/reject 未实现 |
+| Coder Agent | ⏳ 待做 | — |
+| Tester Agent（Docker） | ⏳ 待做 | — |
+| Failure Diagnosis Agent | ⏳ 待做 | Schema 有，Agent 无 |
+| Reviewer Agent | ⏳ 待做 | Schema 有，Agent 无 |
+| PR Writer Agent | ⏳ 待做 | Schema 有，Agent 无 |
+| 用户认证 | ⏳ 待做 | — |
+| Celery 后台任务 | ⏳ 待做 | Redis 已配置，Worker 未接 |
+| 前端（Next.js） | ⏳ 待做 | 目录未创建 |
+| GitHub 集成（OAuth / 创建 PR） | ⏳ 待做 | — |
+| Agent Trace UI | ⏳ 待做 | — |
+| RAG 增强（Query Rewrite + Rerank） | ⏳ 待做 | V2 扩展项 |
+
+---
+
+---
 
 ## 1. 项目概述
 
@@ -58,7 +102,7 @@ FixPilot 是一个面向软件开发工作流的多 Agent Coding 系统。用户
 
 ---
 
-## 3. 项目目标
+## 3. V2 产品目标
 
 ### 3.1 产品目标
 
@@ -153,39 +197,57 @@ Final Report
 
 ---
 
-## 5. MVP 范围
+---
 
-### 5.1 MVP 必须实现
+## 5. V2 交付范围
 
-1. 用户登录。
-2. 用户输入 public GitHub repo URL 和 issue 文本。
-3. 系统 clone repo 到独立 workspace。
-4. Repository Analyst 识别项目语言、框架、包管理器和测试命令。
-5. Issue Analyst 输出结构化 issue 分析。
-6. Code Retriever 使用关键词搜索和文件读取检索相关代码。
-7. Planner 生成修改计划。
-8. 用户审批修改计划。
-9. Coder 根据计划修改文件。
-10. Tester 使用 Docker 运行测试命令。
-11. Failure Diagnosis 在测试失败时分析 stderr/stdout。
-12. 最多自动重试 2 次。
-13. Reviewer 审查 diff。
-14. PR Writer 生成 PR 文案。
-15. 前端展示 Agent 执行时间线、工具调用、diff 和测试日志。
+> 原「MVP 必须实现」与「V1 增强范围」已合并为本节，统一为 V2 目标。每项标注实现状态。
 
-### 5.2 V1 增强范围
+### 5.1 V2 核心交付（原 MVP）
 
-1. GitHub OAuth。
-2. 私有 repo 支持。
-3. 自动读取 issue URL。
-4. LlamaIndex 代码语义检索。
-5. 自动创建 branch、commit 和 PR。
-6. 多 Agent 并行化，例如代码检索和 repo 分析并行。
-7. 更细粒度权限控制。
-8. 支持 Python、TypeScript、Go、Java。
-9. 支持 Code Review Agent 独立审查。
-10. 支持回滚到任意 retry step。
-11. Agent Trace 可视化和任务回放。
+| # | 交付项 | 状态 |
+|---|---|---|
+| 1 | 用户登录 | ⏳ 待做 |
+| 2 | 用户输入 public GitHub repo URL 和 issue 文本 | ✅ 已完成 |
+| 3 | 系统 clone repo 到独立 workspace | ✅ 已完成（Tool） |
+| 4 | Repository Analyst 识别项目语言、框架、测试命令 | ✅ 已完成（Tool） |
+| 5 | Issue Analyst 输出结构化 issue 分析 | ✅ 已完成 |
+| 6 | Code Retriever 检索相关代码（semantic + keyword + hybrid） | ✅ 已完成 |
+| 7 | Planner 生成修改计划 | ✅ 已完成 |
+| 8 | 用户审批修改计划 | ⏳ 待做 |
+| 9 | Coder 根据计划修改文件 | ⏳ 待做 |
+| 10 | Tester 使用 Docker 运行测试 | ⏳ 待做 |
+| 11 | Failure Diagnosis 分析测试失败 | ⏳ 待做 |
+| 12 | 最多自动重试 2 次 | ⏳ 待做 |
+| 13 | Reviewer 审查 diff | ⏳ 待做 |
+| 14 | PR Writer 生成 PR 文案 | ⏳ 待做 |
+| 15 | 前端展示 Agent 时间线、工具调用、diff 和测试日志 | ⏳ 待做 |
+| 16 | LangGraph Workflow 串联全流程 | ⏳ 待做（**当前重点**） |
+
+### 5.2 V2 标准能力（原 V1 增强）
+
+| # | 能力 | 状态 |
+|---|---|---|
+| 1 | GitHub OAuth | ⏳ 待做 |
+| 2 | 私有 repo 支持 | ⏳ 待做（V3+） |
+| 3 | 自动读取 issue URL | ⏳ 待做 |
+| 4 | LlamaIndex 代码语义检索 | ✅ 已完成 |
+| 5 | 自动创建 branch、commit 和 PR | ⏳ 待做 |
+| 6 | 多 Agent 并行化 | ⏳ 待做（V3+） |
+| 7 | 更细粒度权限控制 | ⏳ 待做 |
+| 8 | 支持 Python、TypeScript、Go、Java | 🔄 进行中（识别 ✅） |
+| 9 | Code Review Agent 独立审查 | ⏳ 待做 |
+| 10 | 回滚到任意 retry step | ⏳ 待做 |
+| 11 | Agent Trace 可视化和任务回放 | ⏳ 待做 |
+
+### 5.3 V2 扩展（RAG 增强 / 评测）
+
+| 能力 | 状态 |
+|---|---|
+| Query Rewrite | ⏳ 待做 |
+| LLM Rerank | ⏳ 待做 |
+| 检索结果写入 retrieved_contexts 表 | ⏳ 待做 |
+| LLM-as-Judge 自动评测 | ⏳ 待做 |
 
 ---
 
@@ -281,6 +343,10 @@ retry_count < max_retries 则回到 Coder
 
 ---
 
+> **流程实现状态**：创建任务 ✅；Issue/检索/Planner 单 Agent API ✅；LangGraph 自动串联 ⏳；审批/Coder/Tester 及后续 ⏳。
+
+---
+
 ## 7. 功能需求
 
 ## 7.1 用户与任务模块
@@ -289,9 +355,12 @@ retry_count < max_retries 则回到 Coder
 
 用户可以通过邮箱密码登录。
 
-**V1 支持：**
+**V2 扩展：**
 
 - GitHub OAuth
+
+
+**实现状态**：⏳ 待做
 
 ### FR-002 创建修复任务
 
@@ -310,10 +379,12 @@ retry_count < max_retries 则回到 Coder
 **验收标准：**
 
 1. repo_url 必须是合法 GitHub URL。
-2. MVP 只支持 public repo。
+2. V2 先支持 public repo（私有 repo 见 V3+）。
 3. 创建成功后返回 task_id。
 4. 任务初始状态为 pending。
 
+
+**实现状态**：✅ 已完成
 ### FR-003 查看任务列表
 
 展示：
@@ -325,6 +396,8 @@ retry_count < max_retries 则回到 Coder
 5. 创建时间。
 6. 最终结果。
 
+
+**实现状态**：✅ 已完成
 ### FR-004 查看任务详情
 
 展示：
@@ -342,6 +415,8 @@ retry_count < max_retries 则回到 Coder
 
 ---
 
+
+**实现状态**：🔄 进行中（基础详情 ✅，时间线/diff/测试 ⏳）
 ## 7.2 Repository Analyst Agent
 
 ### FR-101 Clone Repo
@@ -355,6 +430,8 @@ retry_count < max_retries 则回到 Coder
 3. clone 失败时任务状态为 failed。
 4. clone 日志保存到 task_steps。
 
+
+**实现状态**：✅ 已完成（`repo_clone_tool` + `workspace.py`）
 ### FR-102 分析项目结构
 
 识别：
@@ -379,6 +456,8 @@ retry_count < max_retries 则回到 Coder
 | pom.xml | Java Maven |
 | Cargo.toml | Rust |
 
+
+**实现状态**：✅ 已完成（`repo_analysis_tool.py`）
 ### FR-103 生成文件树摘要
 
 要求：
@@ -390,6 +469,8 @@ retry_count < max_retries 则回到 Coder
 
 ---
 
+
+**实现状态**：✅ 已完成（`repo_analysis_tool.py`）
 ## 7.3 Issue Analyst Agent
 
 ### FR-201 Issue 分类
@@ -415,6 +496,8 @@ retry_count < max_retries 则回到 Coder
 2. 信息不足时 needs_user_clarification 为 true。
 3. high risk 任务必须进入人工审批。
 
+
+**实现状态**：✅ 已完成（`issue_analyst.py` + `/api/issue-analysis`）
 ### FR-202 提取验收条件
 
 从 issue 中提取可验证条件。
@@ -433,6 +516,8 @@ retry_count < max_retries 则回到 Coder
 
 ---
 
+
+**实现状态**：✅ 已完成
 ## 7.4 Code Retriever Agent
 
 ### FR-301 关键词搜索
@@ -453,9 +538,11 @@ retry_count < max_retries 则回到 Coder
 4. snippet。
 5. score。
 
+
+**实现状态**：✅ 已完成
 ### FR-302 LlamaIndex 代码语义检索
 
-V1 使用 LlamaIndex 对代码库建立索引。
+V2 使用 LlamaIndex 对代码库建立索引（**已实现**，默认 semantic 模式）。
 
 **切分策略：**
 
@@ -481,6 +568,8 @@ V1 使用 LlamaIndex 对代码库建立索引。
 }
 ```
 
+
+**实现状态**：✅ 已完成（`semantic_search_tool.py`，semantic 为默认模式）
 ### FR-303 多策略检索
 
 组合：
@@ -493,6 +582,8 @@ Issue keywords
   + file tree hints
 ```
 
+
+**实现状态**：✅ 已完成（semantic / keyword / hybrid）
 ### FR-304 读取文件
 
 Agent 可以读取文件内容。
@@ -506,6 +597,8 @@ Agent 可以读取文件内容。
 
 ---
 
+
+**实现状态**：⏳ 待做（`read_file_tool` 未实现）
 ## 7.5 Planner Agent
 
 ### FR-401 生成修改计划
@@ -542,6 +635,8 @@ Agent 可以读取文件内容。
 3. 必须说明风险。
 4. 计划必须审批后才能进入 Coder。
 
+
+**实现状态**：✅ 已完成（`planner.py` + `/api/planner`）
 ### FR-402 计划修订
 
 用户可以补充要求，Planner 重新生成计划。
@@ -556,6 +651,8 @@ Planner 必须把用户补充要求写入 state。
 
 ---
 
+
+**实现状态**：⏳ 待做（需 LangGraph + approval 流程）
 ## 7.6 Coder Agent
 
 ### FR-501 生成 Patch
@@ -564,8 +661,8 @@ Coder 根据审批计划生成 patch。
 
 **方式：**
 
-1. MVP 使用 unified diff。
-2. V1 支持结构化 edit operations。
+1. V2 首选 unified diff。
+2. V2 可选结构化 edit operations。
 
 **edit operation 示例：**
 
@@ -578,6 +675,8 @@ Coder 根据审批计划生成 patch。
 }
 ```
 
+
+**实现状态**：⏳ 待做
 ### FR-502 修改限制
 
 Coder 只能修改计划中允许的文件。
@@ -589,6 +688,8 @@ Coder 只能修改计划中允许的文件。
 3. patch 应用失败时回滚。
 4. 修改后必须生成 git diff。
 
+
+**实现状态**：⏳ 待做
 ### FR-503 新增测试
 
 如果项目存在测试目录，Coder 应尝试新增或更新测试。
@@ -601,6 +702,8 @@ Coder 只能修改计划中允许的文件。
 
 ---
 
+
+**实现状态**：⏳ 待做
 ## 7.7 Tester Agent
 
 ### FR-601 Docker 沙箱执行
@@ -615,8 +718,10 @@ Tester 在 Docker 沙箱运行测试。
 | Memory | 2GB |
 | Timeout | 120 秒 |
 | Workspace | 当前任务目录 |
-| Network | MVP 可开启，V1 可限制 |
+| Network | V2 可开启，后期可限制 |
 
+
+**实现状态**：⏳ 待做
 ### FR-602 自动检测测试命令
 
 规则：
@@ -629,6 +734,8 @@ Tester 在 Docker 沙箱运行测试。
 | Go | go test ./... |
 | Rust | cargo test |
 
+
+**实现状态**：🔄 进行中（检测 ✅，Docker 执行 ⏳）
 ### FR-603 运行 lint 和 type check
 
 支持：
@@ -641,6 +748,8 @@ Tester 在 Docker 沙箱运行测试。
 6. go test ./...
 7. cargo clippy
 
+
+**实现状态**：⏳ 待做
 ### FR-604 测试结果结构化
 
 输出：
@@ -658,6 +767,8 @@ Tester 在 Docker 沙箱运行测试。
 
 ---
 
+
+**实现状态**：🔄 进行中（Schema ✅，Agent ⏳）
 ## 7.8 Failure Diagnosis Agent
 
 ### FR-701 错误诊断
@@ -677,6 +788,8 @@ Tester 在 Docker 沙箱运行测试。
 }
 ```
 
+
+**实现状态**：🔄 进行中（Schema ✅，Agent ⏳）
 ### FR-702 有限重试
 
 默认 max_retries = 2。
@@ -690,6 +803,8 @@ Tester 在 Docker 沙箱运行测试。
 
 ---
 
+
+**实现状态**：⏳ 待做
 ## 7.9 Reviewer Agent
 
 ### FR-801 Diff 审查
@@ -704,6 +819,8 @@ Reviewer 检查：
 6. 是否有测试。
 7. 是否符合 issue 目标。
 
+
+**实现状态**：🔄 进行中（Schema ✅，Agent ⏳）
 ### FR-802 风险分级
 
 输出：
@@ -726,6 +843,8 @@ Reviewer 检查：
 
 ---
 
+
+**实现状态**：🔄 进行中（Schema ✅，Agent ⏳）
 ## 7.10 PR Writer Agent
 
 ### FR-901 生成 PR 文案
@@ -733,6 +852,8 @@ Reviewer 检查：
 格式：
 
 ```markdown
+
+**实现状态**：🔄 进行中（Schema ✅，Agent ⏳）
 ## Summary
 
 ## Changes
@@ -752,7 +873,9 @@ Reviewer 检查：
 fix: handle empty input in request validator
 ```
 
-### FR-903 V1 创建 PR
+
+**实现状态**：⏳ 待做
+### FR-903 创建 PR（GitHub 集成）
 
 流程：
 
@@ -773,6 +896,10 @@ return PR URL
 1. 创建 PR 前必须审批。
 2. 不允许自动 merge。
 3. commit message 和 PR body 必须展示给用户。
+
+---
+
+**实现状态**：⏳ 待做（V2 后期 GitHub 集成）
 
 ---
 
@@ -848,6 +975,26 @@ class FixPilotState(TypedDict):
 | review_diff_node | Reviewer | 审查 diff |
 | pr_writer_node | PR Writer | 生成 PR 文案 |
 | final_report_node | Coordinator | 生成报告 |
+
+
+**Node 实现状态：**
+
+| Node | 状态 |
+|---|---|
+| intake_node | ⏳ |
+| clone_repo_node | 🔄 Tool ✅ |
+| analyze_repo_node | 🔄 Tool ✅ |
+| classify_issue_node | ✅ |
+| retrieve_context_node | ✅ |
+| planning_node | ✅ |
+| approval_node | ⏳ |
+| edit_code_node | ⏳ |
+| run_tests_node | ⏳ |
+| diagnose_failure_node | ⏳ |
+| retry_decision_node | ⏳ |
+| review_diff_node | ⏳ |
+| pr_writer_node | ⏳ |
+| final_report_node | ⏳ |
 
 ### 8.3 Edge 设计
 
@@ -1192,9 +1339,48 @@ POST /api/github/create-pr
 
 ---
 
-## 14. Prompt 设计
+## 14. RAG 架构说明
 
-### 14.1 Issue Analyst Prompt
+### 14.1 RAG 在 FixPilot 中的位置
+
+```text
+Issue 文本
+  ↓ Retrieve（Code Retriever）
+    ├── keyword 搜索
+    ├── LlamaIndex 语义检索
+    └── hybrid 合并
+  ↓ Augment（Planner 拼进 Prompt）
+  ↓ Generate（Planner / Coder 调用 LLM）
+```
+
+- **RAG** = 架构方法论（Retrieve → Augment → Generate）
+- **LlamaIndex** = 实现 Retrieve 阶段的工具库（不是 RAG 本身）
+
+### 14.2 当前 RAG 实现
+
+| 组件 | 实现 | 状态 |
+|---|---|---|
+| Embedding | text-embedding-3-small | ✅ |
+| 切分 | 50 行/chunk（V2 目标： additionally 按函数/类切分） | ✅ / ⏳ |
+| 索引缓存 | `.llamaindex_cache/` | ✅ |
+| 检索模式 | semantic / keyword / hybrid | ✅ |
+| Query Rewrite | — | ⏳ |
+| LLM Rerank | — | ⏳ |
+| 检索结果写入 DB | retrieved_contexts 表 | ⏳ |
+
+### 14.3 上下文管理（任务级 State，非对话记忆）
+
+| 层级 | 内容 | 持久化 | 状态 |
+|---|---|---|---|
+| FixPilotState | 各 Agent 输出汇总 | LangGraph checkpoint | ⏳ |
+| PostgreSQL | agent_steps、retrieved_contexts 等 | 8 张表 | 🔄 表 ✅，写入 ⏳ |
+| Prompt 截断 | Planner 限制 snippet 行数 | 单次调用 | ✅ |
+
+---
+
+## 15. Prompt 设计
+
+### 15.1 Issue Analyst Prompt
 
 ```text
 你是一个资深软件工程师，负责分析 GitHub Issue。
@@ -1203,7 +1389,7 @@ POST /api/github/create-pr
 如果信息不足，请设置 needs_user_clarification=true。
 ```
 
-### 14.2 Planner Prompt
+### 15.2 Planner Prompt
 
 ```text
 你是一个谨慎的软件修复规划 Agent。
@@ -1212,7 +1398,7 @@ POST /api/github/create-pr
 计划必须包含涉及文件、修改原因、测试计划和风险分析。
 ```
 
-### 14.3 Coder Prompt
+### 15.3 Coder Prompt
 
 ```text
 你是代码修改 Agent。
@@ -1223,7 +1409,7 @@ POST /api/github/create-pr
 输出 unified diff 或结构化 edit operations。
 ```
 
-### 14.4 Tester Prompt
+### 15.4 Tester Prompt
 
 ```text
 你是测试执行 Agent。
@@ -1231,7 +1417,7 @@ POST /api/github/create-pr
 你必须输出结构化测试结果，包括 command、exit_code、stdout、stderr、duration_ms。
 ```
 
-### 14.5 Failure Diagnosis Prompt
+### 15.5 Failure Diagnosis Prompt
 
 ```text
 你是错误诊断 Agent。
@@ -1241,7 +1427,7 @@ POST /api/github/create-pr
 输出 JSON。
 ```
 
-### 14.6 Reviewer Prompt
+### 15.6 Reviewer Prompt
 
 ```text
 你是代码审查 Agent。
@@ -1251,11 +1437,13 @@ POST /api/github/create-pr
 
 ---
 
-## 15. 非功能需求
+---
 
-### 15.1 性能要求
+## 16. 非功能需求
 
-| 指标 | MVP 要求 |
+### 16.1 性能要求
+
+| 指标 | V2 要求 |
 |---|---|
 | 创建任务响应 | < 3 秒 |
 | repo clone | 异步执行 |
@@ -1265,7 +1453,7 @@ POST /api/github/create-pr
 | 单任务最大运行时间 | 15 分钟 |
 | 并发任务 | 5 |
 
-### 15.2 可靠性要求
+### 16.2 可靠性要求
 
 1. 每个任务状态必须持久化。
 2. 每个 Agent step 必须持久化。
@@ -1274,7 +1462,7 @@ POST /api/github/create-pr
 5. 修改失败必须回滚。
 6. 任务中断后可以查看已完成步骤。
 
-### 15.3 可观测性要求
+### 16.3 可观测性要求
 
 记录：
 
@@ -1290,9 +1478,9 @@ POST /api/github/create-pr
 
 ---
 
-## 16. 评估指标
+## 17. 评估指标
 
-### 16.1 产品指标
+### 17.1 产品指标
 
 | 指标 | 目标 |
 |---|---|
@@ -1304,7 +1492,7 @@ POST /api/github/create-pr
 | 平均任务完成时间 | < 10 分钟 |
 | 高风险误执行次数 | 0 |
 
-### 16.2 Agent 指标
+### 17.2 Agent 指标
 
 | 指标 | 说明 |
 |---|---|
@@ -1320,7 +1508,21 @@ POST /api/github/create-pr
 
 ---
 
-## 17. 里程碑
+
+### Phase 开发顺序（与 Milestone 对照）
+
+> **当前重点：Phase 2 — LangGraph Workflow + 上下文持久化 + 审批 API**
+
+| Phase | 内容 | 状态 |
+|---|---|---|
+| Phase 1 | 单 Agent 能力（Issue/Retriever/Planner + Tools + DB） | ✅ 已完成 |
+| Phase 2 | LangGraph 线性 Workflow + State + DB 写入 + 审批 API | ⏳ **当前重点** |
+| Phase 3 | Coder + Tester + edit_history / test_runs | ⏳ 待做 |
+| Phase 4 | Failure Diagnosis + Reviewer + PR Writer + retry 分支 | ⏳ 待做 |
+| Phase 5 | 前端 + Agent Trace UI | ⏳ 待做 |
+| Phase 6 | GitHub 集成 + Celery + 评测 | ⏳ 待做 |
+
+## 18. 里程碑
 
 ### Milestone 1：基础任务系统
 
@@ -1395,9 +1597,9 @@ POST /api/github/create-pr
 
 ---
 
-## 18. 验收标准
+## 19. 验收标准
 
-MVP 完成标准：
+V2 完成标准（全部达成即 V2 验收通过）：
 
 1. 用户可以创建修复任务。
 2. 系统可以 clone public GitHub repo。
@@ -1417,7 +1619,7 @@ MVP 完成标准：
 
 ---
 
-## 19. 可量化指标
+## 20. 可量化指标
 
 建议最终展示：
 
@@ -1436,7 +1638,7 @@ MVP 完成标准：
 
 ---
 
-## 20. 简历写法
+## 21. 简历写法
 
 ```text
 FixPilot｜基于 LangGraph 的多 Agent Coding 系统
@@ -1452,7 +1654,7 @@ FixPilot｜基于 LangGraph 的多 Agent Coding 系统
 
 ---
 
-## 21. 风险与应对
+## 22. 风险与应对
 
 | 风险 | 影响 | 应对 |
 |---|---|---|
@@ -1461,13 +1663,15 @@ FixPilot｜基于 LangGraph 的多 Agent Coding 系统
 | 代码检索不准 | patch 错误 | keyword + semantic hybrid retrieval |
 | LLM 生成无效 diff | patch 失败 | diff 校验 + 回滚 |
 | 重试越修越错 | 质量下降 | max_retries 限制 + Reviewer 审查 |
-| 私有 repo 权限复杂 | 集成困难 | MVP 只支持 public repo |
+| 私有 repo 权限复杂 | 集成困难 | V2 先 public repo，V3+ 私有 |
 | 高风险修改误执行 | 安全风险 | human-in-the-loop + audit log |
 | 上下文过长 | 成本高 | 文件摘要 + 代码片段检索 |
 
 ---
 
-## 22. 后续扩展方向
+---
+
+## 23. V3+ 扩展方向
 
 1. 支持私有 repo。
 2. 支持自动创建 PR。
@@ -1478,3 +1682,35 @@ FixPilot｜基于 LangGraph 的多 Agent Coding 系统
 7. 支持安全漏洞修复 Agent。
 8. 支持浏览器自动化。
 9. 扩展成 DevClaw：开发者版多 Agent 自动化助手。
+
+---
+
+## 附录 A：当前代码目录与需求映射
+
+```text
+backend/app/
+├── agents/
+│   ├── issue_analyst.py      ✅ FR-201~202
+│   ├── code_retriever.py     ✅ FR-301~303
+│   └── planner.py            ✅ FR-401
+├── tools/
+│   ├── workspace.py          ✅ FR-101
+│   ├── repo_clone_tool.py    ✅ FR-101
+│   ├── repo_analysis_tool.py ✅ FR-102~103
+│   └── semantic_search_tool.py ✅ FR-302
+├── models/                   ✅ 8 张表（业务写入 ⏳）
+├── schemas/                  ✅ 各 Agent 输入输出
+├── api/routes/               ✅ 部分 API
+└── core/config.py            ✅
+```
+
+---
+
+## 附录 B：明确不做（V2 范围外）
+
+| 能力 | 原因 |
+|---|---|
+| MCP 协议 | LangChain Tools 已够用 |
+| 多轮对话三级记忆 | FixPilot 是任务流，不是客服 |
+| Monitor 动态调权重 | 需要线上数据，V3+ |
+| 浏览器自动化 | 安全风险高，V3+ |

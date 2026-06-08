@@ -8,3 +8,5 @@ venv/
 *.egg-info/
 dist/
 build/
+backend/llama_index_data/
+.llamaindex_cache/

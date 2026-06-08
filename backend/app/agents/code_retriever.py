@@ -1,119 +1,111 @@
 # backend/app/agents/code_retriever.py
-# 作用：Code Retriever Agent —— 根据 issue 关键词搜索相关代码文件
+#
+# 作用：Code Retriever Agent —— 根据 issue 检索相关代码文件。
+#
+# 检索流程（语义模式，默认）：
+# 1. 调用 build_code_index() 为 repo 建立 LlamaIndex 向量索引
+# 2. 用 query_text（issue 完整文本）或 issue_summary 作为 query
+# 3. semantic_search() 返回余弦相似度最高的 top-k 代码 chunk
+# 4. 转换成 RetrievedFile 格式，返回给 Planner Agent
 #
 # 为什么不把整个 repo 塞给 LLM？
 # - 大型仓库有几千个文件，几十万行代码
-# - LLM 的 context window 有上限（比如 DeepSeek 128K token）
-# - 把全部代码塞进去既浪费 token 又容易干扰 LLM 的注意力
+# - LLM 的 context window 有上限（如 DeepSeek 128K token）
 # - 正确做法：先"检索"相关片段，再交给 LLM 分析
 #
-# MVP 阶段：用关键词搜索（简单、快、无需额外依赖）
-# 未来阶段：可以换成 LlamaIndex 语义搜索（更智能）
-#
-# 关键词搜索 vs 语义搜索：
-# - 关键词搜索：直接在文件内容里找字符串，快但靠关键词质量
-# - 语义搜索：把代码向量化，找"含义相近"的片段，慢但准确
+# 三种检索模式：
+# - semantic（默认）：LlamaIndex 向量检索，找语义相近的代码
+# - keyword：关键词字符串搜索，适合调试或 Embedding API 不可用时
+# - hybrid：两者结果合并去重，精度最高
 
 import logging
 import os
+import re
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from app.schemas.code_retrieval import (
     CodeRetrievalRequest,
     CodeRetrievalResult,
     RetrievedFile,
 )
+from app.tools.semantic_search_tool import (
+    IGNORED_DIRS,
+    MAX_FILE_SIZE_BYTES,
+    SEARCHABLE_EXTENSIONS,
+    build_code_index,
+    semantic_search,
+)
 
 logger = logging.getLogger(__name__)
 
-# 只搜索这些扩展名的文件（避免在二进制文件里搜索）
-SEARCHABLE_EXTENSIONS: set[str] = {
-    ".py", ".js", ".ts", ".tsx", ".jsx",
-    ".go", ".java", ".rs", ".rb", ".php",
-    ".c", ".cpp", ".h", ".hpp",
-    ".cs", ".swift", ".kt",
-    ".md", ".txt", ".yaml", ".yml", ".toml", ".cfg", ".ini",
-    ".json", ".xml", ".html", ".css", ".scss",
-    ".sh", ".bash", ".zsh",
-    ".sql",
-}
 
-# 跳过这些目录（和 repo_analysis_tool.py 里的过滤规则保持一致）
-IGNORED_DIRS: set[str] = {
-    ".git", ".svn", "node_modules", "vendor",
-    ".venv", "venv", "env", "__pycache__",
-    "dist", "build", "out", "target", ".next",
-    ".tox", ".eggs", "htmlcov",
-}
-
-# 单个文件最大读取大小（字节）：超过此大小的文件跳过
-# 避免读取几 MB 的大文件，消耗太多内存和时间
-MAX_FILE_SIZE_BYTES = 512 * 1024  # 512 KB
+# ── 语义检索（主路径）────────────────────────────────────────────────────────
 
 
-def extract_keywords_from_issue(
-    issue_text: str,
-    issue_analysis: dict | None = None,
-) -> List[str]:
+def _retrieve_semantic(request: CodeRetrievalRequest) -> CodeRetrievalResult:
     """
-    从 issue 文本和分析结果中提取搜索关键词。
-
-    提取策略：
-    1. 从 issue_analysis 里取 summary、acceptance_criteria
-    2. 从 issue_text 里提取"看起来像代码标识符"的词（驼峰、下划线命名）
-    3. 合并去重，过滤太短或太通用的词
+    使用 LlamaIndex 语义检索找到与 issue 最相关的代码 chunk。
 
     参数:
-        issue_text: 原始 issue 文本
-        issue_analysis: Issue Analyst 的分析结果（dict 格式）
+        request: 包含 repo_path 和 query_text / issue_summary
 
     返回:
-        关键词列表（最多 15 个）
+        CodeRetrievalResult，search_method="semantic"
     """
-    keywords: set[str] = set()
+    repo_path = Path(request.repo_path)
 
-    # ── 从 issue_analysis 里提取结构化关键词 ──
-    if issue_analysis:
-        summary = issue_analysis.get("summary", "")
-        # 把 summary 里超过 3 个字符的"词"加进去
-        for word in summary.split():
-            cleaned = word.strip(".,;:!?()'\"")
-            if len(cleaned) >= 3:
-                keywords.add(cleaned)
+    # 确定 query：优先用完整 issue 文本，其次用摘要
+    query = request.query_text or request.issue_summary
+    if not query:
+        logger.warning("未提供 query_text 或 issue_summary，无法进行语义检索")
+        return CodeRetrievalResult(
+            retrieved_files=[],
+            total_searched_files=0,
+            keywords_used=[],
+            search_method="semantic",
+        )
 
-        # 从验收条件里也提取
-        for criterion in issue_analysis.get("acceptance_criteria", []):
-            for word in criterion.split():
-                cleaned = word.strip(".,;:!?()'\"")
-                if len(cleaned) >= 3:
-                    keywords.add(cleaned)
+    preview = query[:80] + "..." if len(query) > 80 else query
+    logger.info(f"语义检索开始：repo={repo_path.name}, query='{preview}'")
 
-    # ── 从 issue_text 里提取"代码风格"的词 ──
-    # 代码标识符通常包含下划线、驼峰或数字
-    import re
-    # 匹配函数名、变量名、类名、方法名等模式
-    code_identifiers = re.findall(
-        r'\b[a-zA-Z][a-zA-Z0-9_]{2,}\b',
-        issue_text,
+    # 缓存目录放在 repo 同级，避免污染仓库本身
+    cache_dir = repo_path.parent / ".llamaindex_cache"
+    index = build_code_index(repo_path=repo_path, cache_dir=cache_dir)
+
+    raw_results = semantic_search(
+        index=index,
+        query_text=query,
+        top_k=request.max_files,
     )
-    for identifier in code_identifiers:
-        # 过滤太通用的英文词（stop words）
-        if identifier.lower() not in _STOP_WORDS:
-            keywords.add(identifier)
 
-    # 过滤太短的词（小于 3 个字符）
-    filtered = [k for k in keywords if len(k) >= 3]
+    retrieved_files = [
+        RetrievedFile(
+            file_path=item["file_path"],
+            line_start=item["line_start"],
+            line_end=item["line_end"],
+            snippet=item["snippet"],
+            score=item["score"],
+            method="semantic",
+        )
+        for item in raw_results
+    ]
 
-    # 按长度降序排，长词更具体更有搜索价值
-    filtered.sort(key=len, reverse=True)
+    logger.info(f"语义检索完成：返回 {len(retrieved_files)} 个代码片段")
 
-    logger.info(f"提取到 {len(filtered)} 个关键词：{filtered[:10]}")
-    return filtered[:15]  # 最多返回 15 个关键词
+    return CodeRetrievalResult(
+        retrieved_files=retrieved_files,
+        total_searched_files=0,   # 语义检索不统计扫描文件数
+        keywords_used=[],
+        search_method="semantic",
+    )
 
 
-# 英文停用词（太通用，搜索价值低）
-_STOP_WORDS = {
+# ── 关键词检索（备用路径）────────────────────────────────────────────────────
+
+
+# 英文停用词：太通用，搜索价值低
+_STOP_WORDS: set[str] = {
     "the", "and", "for", "are", "but", "not", "you", "all",
     "can", "her", "was", "one", "our", "out", "day", "get",
     "has", "him", "his", "how", "man", "new", "now", "old",
@@ -129,40 +121,51 @@ _STOP_WORDS = {
 }
 
 
-def _collect_searchable_files(repo_path: Path) -> List[Path]:
+def extract_keywords_from_issue(
+    issue_text: str,
+    issue_analysis: Optional[dict] = None,
+) -> List[str]:
     """
-    递归收集仓库里所有可搜索的文件路径。
+    从 issue 文本和分析结果中提取搜索关键词。
+
+    提取策略：
+    1. 从 issue_analysis 里取 summary、acceptance_criteria
+    2. 从 issue_text 里提取"看起来像代码标识符"的词（驼峰、下划线命名）
+    3. 合并去重，过滤太短或太通用的词
 
     参数:
-        repo_path: 仓库根目录路径
+        issue_text: 原始 issue 文本
+        issue_analysis: Issue Analyst 的分析结果（dict 格式，可选）
 
     返回:
-        符合条件的文件路径列表
+        关键词列表（最多 15 个，按长度降序排列）
     """
-    files: List[Path] = []
+    keywords: set[str] = set()
 
-    for root, dirs, filenames in os.walk(repo_path):
-        # 就地修改 dirs，os.walk 就不会继续进入这些目录
-        # 这是用 os.walk 过滤目录的标准做法
-        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
+    if issue_analysis:
+        summary = issue_analysis.get("summary", "")
+        for word in summary.split():
+            cleaned = word.strip(".,;:!?()'\"")
+            if len(cleaned) >= 3:
+                keywords.add(cleaned)
 
-        for filename in filenames:
-            file_path = Path(root) / filename
-            suffix = file_path.suffix.lower()
+        for criterion in issue_analysis.get("acceptance_criteria", []):
+            for word in criterion.split():
+                cleaned = word.strip(".,;:!?()'\"")
+                if len(cleaned) >= 3:
+                    keywords.add(cleaned)
 
-            if suffix not in SEARCHABLE_EXTENSIONS:
-                continue
+    # 提取"代码风格"的词（函数名、变量名、类名等标识符模式）
+    code_identifiers = re.findall(r'\b[a-zA-Z][a-zA-Z0-9_]{2,}\b', issue_text)
+    for identifier in code_identifiers:
+        if identifier.lower() not in _STOP_WORDS:
+            keywords.add(identifier)
 
-            # 跳过太大的文件
-            try:
-                if file_path.stat().st_size > MAX_FILE_SIZE_BYTES:
-                    continue
-            except OSError:
-                continue
+    filtered = [k for k in keywords if len(k) >= 3]
+    filtered.sort(key=len, reverse=True)
 
-            files.append(file_path)
-
-    return files
+    logger.info(f"提取到 {len(filtered)} 个关键词：{filtered[:10]}")
+    return filtered[:15]
 
 
 def _search_file_for_keywords(
@@ -170,25 +173,18 @@ def _search_file_for_keywords(
     repo_path: Path,
     keywords: List[str],
     max_snippet_lines: int,
-) -> Tuple[float, RetrievedFile | None]:
+) -> Tuple[float, Optional[RetrievedFile]]:
     """
     在单个文件里搜索关键词，返回相关度评分和文件信息。
 
-    搜索策略：
-    1. 读取文件内容，按行存储
-    2. 对每一行检查是否包含任意关键词
-    3. 找出"命中行"，提取包含这些行的代码片段
-    4. 评分 = 命中关键词数量 × 权重
-
     参数:
-        file_path: 要搜索的文件路径
-        repo_path: 仓库根目录（用于计算相对路径）
+        file_path: 要搜索的文件
+        repo_path: 仓库根目录
         keywords: 关键词列表
-        max_snippet_lines: 每个文件最多返回多少行代码
+        max_snippet_lines: 每个文件最多返回多少行
 
     返回:
-        (score, RetrievedFile | None)
-        score=0 且 result=None 表示没有命中
+        (score, RetrievedFile | None)，score=0 表示未命中
     """
     try:
         content = file_path.read_text(encoding="utf-8", errors="ignore")
@@ -197,12 +193,10 @@ def _search_file_for_keywords(
         return 0.0, None
 
     lines = content.splitlines()
-
-    # 对每一行检查是否命中任意关键词
-    # hit_lines: {行号: [命中的关键词列表]}
-    hit_lines: dict[int, list[str]] = {}
     keywords_lower = [k.lower() for k in keywords]
 
+    # 找出所有命中行
+    hit_lines: Dict[int, List[str]] = {}
     for line_idx, line in enumerate(lines):
         line_lower = line.lower()
         matched = [
@@ -216,94 +210,79 @@ def _search_file_for_keywords(
     if not hit_lines:
         return 0.0, None
 
-    # ── 计算评分 ──
-    # 命中的唯一关键词越多、命中行越多，评分越高
-    all_matched_keywords = set()
+    all_matched_keywords: set[str] = set()
     for matched in hit_lines.values():
         all_matched_keywords.update(matched)
 
     score = (
-        len(all_matched_keywords) * 20.0  # 每个唯一关键词 +20 分
-        + min(len(hit_lines), 5) * 5.0     # 每个命中行 +5 分，最多 5 行
+        len(all_matched_keywords) * 20.0
+        + min(len(hit_lines), 5) * 5.0
     )
 
-    # ── 提取最相关的代码片段 ──
-    # 找到第一个命中行，提取它周围的上下文
     first_hit_line = min(hit_lines.keys())
-
-    # 上下文：命中行前 5 行 + 命中行 + 命中行后 (max_snippet_lines - 5) 行
-    context_before = 5
-    snippet_start = max(0, first_hit_line - context_before)
+    snippet_start = max(0, first_hit_line - 5)
     snippet_end = min(len(lines), snippet_start + max_snippet_lines)
+    snippet = "\n".join(lines[snippet_start:snippet_end])
 
-    snippet_lines = lines[snippet_start:snippet_end]
-    snippet = "\n".join(snippet_lines)
-
-    # 计算相对路径（相对于仓库根目录，用于展示）
     try:
-        relative_path = str(file_path.relative_to(repo_path))
-        # Windows 路径分隔符统一成 /
-        relative_path = relative_path.replace("\\", "/")
+        relative_path = str(file_path.relative_to(repo_path)).replace("\\", "/")
     except ValueError:
         relative_path = str(file_path)
 
     result = RetrievedFile(
         file_path=relative_path,
-        line_start=snippet_start + 1,  # 转成 1-based 行号
-        line_end=snippet_start + len(snippet_lines),
+        line_start=snippet_start + 1,
+        line_end=snippet_start + (snippet_end - snippet_start),
         snippet=snippet,
         matched_keywords=list(all_matched_keywords),
         score=score,
+        method="keyword",
     )
 
     return score, result
 
 
-def retrieve_code(request: CodeRetrievalRequest) -> CodeRetrievalResult:
+def _retrieve_keyword(request: CodeRetrievalRequest) -> CodeRetrievalResult:
     """
-    在仓库里搜索与 issue 相关的代码文件。
+    使用关键词搜索找到相关代码文件（备用模式）。
 
-    整体流程：
-    1. 收集仓库里所有可搜索文件
-    2. 对每个文件用关键词搜索
-    3. 按相关度评分排序
-    4. 返回 top-N 结果
+    适合 Embedding API 不可用、需要精确字符串匹配的场景。
 
     参数:
-        request: CodeRetrievalRequest，包含 repo_path 和关键词列表
+        request: 包含 repo_path 和 keywords
 
     返回:
-        CodeRetrievalResult：检索到的文件列表
-
-    异常:
-        FileNotFoundError: 仓库路径不存在时
+        CodeRetrievalResult，search_method="keyword"
     """
     repo_path = Path(request.repo_path)
 
-    if not repo_path.exists():
-        raise FileNotFoundError(f"仓库路径不存在：{repo_path}")
-
     if not request.keywords:
-        logger.warning("关键词列表为空，无法检索")
+        logger.warning("关键词列表为空，无法进行关键词检索")
         return CodeRetrievalResult(
             retrieved_files=[],
             total_searched_files=0,
             keywords_used=[],
+            search_method="keyword",
         )
 
-    logger.info(
-        f"开始代码检索：repo={repo_path.name}, "
-        f"关键词数量={len(request.keywords)}, "
-        f"关键词={request.keywords}"
-    )
+    # 收集所有可搜索文件
+    all_files: List[Path] = []
+    for root, dirs, filenames in os.walk(repo_path):
+        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
+        for filename in filenames:
+            fp = Path(root) / filename
+            if fp.suffix.lower() not in SEARCHABLE_EXTENSIONS:
+                continue
+            try:
+                if fp.stat().st_size > MAX_FILE_SIZE_BYTES:
+                    continue
+            except OSError:
+                continue
+            all_files.append(fp)
 
-    # ── 第 1 步：收集可搜索文件 ──
-    all_files = _collect_searchable_files(repo_path)
-    logger.info(f"共找到 {len(all_files)} 个可搜索文件")
+    logger.info(f"关键词检索：扫描 {len(all_files)} 个文件")
 
-    # ── 第 2 步：对每个文件搜索关键词 ──
-    scored_results: List[Tuple[float, RetrievedFile]] = []
-
+    scored: List[Tuple[float, RetrievedFile]] = []
     for file_path in all_files:
         score, result = _search_file_for_keywords(
             file_path=file_path,
@@ -312,16 +291,12 @@ def retrieve_code(request: CodeRetrievalRequest) -> CodeRetrievalResult:
             max_snippet_lines=request.max_snippet_lines,
         )
         if result is not None and score > 0:
-            scored_results.append((score, result))
+            scored.append((score, result))
 
-    # ── 第 3 步：按评分排序，取 top-N ──
-    scored_results.sort(key=lambda x: x[0], reverse=True)
-    top_results = [result for _, result in scored_results[: request.max_files]]
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top_results = [r for _, r in scored[: request.max_files]]
 
-    logger.info(
-        f"代码检索完成：命中文件数={len(scored_results)}，"
-        f"返回 top-{len(top_results)} 个"
-    )
+    logger.info(f"关键词检索完成：命中 {len(scored)} 个文件，返回 top-{len(top_results)}")
 
     return CodeRetrievalResult(
         retrieved_files=top_results,
@@ -329,3 +304,89 @@ def retrieve_code(request: CodeRetrievalRequest) -> CodeRetrievalResult:
         keywords_used=request.keywords,
         search_method="keyword",
     )
+
+
+# ── 混合检索（合并去重）────────────────────────────────────────────────────────
+
+
+def _retrieve_hybrid(request: CodeRetrievalRequest) -> CodeRetrievalResult:
+    """
+    混合检索：同时跑语义检索和关键词检索，结果合并去重。
+
+    合并策略：
+    - 按 file_path 去重，优先保留语义检索的结果（score 更可靠）
+    - 排序：semantic 结果在前，keyword 结果在后
+
+    参数:
+        request: 同时包含 query_text 和 keywords
+
+    返回:
+        CodeRetrievalResult，search_method="hybrid"
+    """
+    semantic_result = _retrieve_semantic(request)
+    keyword_result = _retrieve_keyword(request)
+
+    # 以 file_path 去重，semantic 优先
+    seen_paths: set[str] = set()
+    merged: List[RetrievedFile] = []
+
+    for f in semantic_result.retrieved_files:
+        if f.file_path not in seen_paths:
+            seen_paths.add(f.file_path)
+            merged.append(f)
+
+    for f in keyword_result.retrieved_files:
+        if f.file_path not in seen_paths:
+            seen_paths.add(f.file_path)
+            merged.append(f)
+
+    merged = merged[: request.max_files]
+
+    logger.info(
+        f"混合检索完成：semantic={len(semantic_result.retrieved_files)} 个，"
+        f"keyword={len(keyword_result.retrieved_files)} 个，"
+        f"合并后={len(merged)} 个"
+    )
+
+    return CodeRetrievalResult(
+        retrieved_files=merged,
+        total_searched_files=keyword_result.total_searched_files,
+        keywords_used=request.keywords,
+        search_method="hybrid",
+    )
+
+
+# ── 公开入口 ──────────────────────────────────────────────────────────────────
+
+
+def retrieve_code(request: CodeRetrievalRequest) -> CodeRetrievalResult:
+    """
+    代码检索主入口，根据 request.search_method 分发到不同检索策略。
+
+    默认使用 semantic（语义检索）。
+
+    参数:
+        request: CodeRetrievalRequest
+
+    返回:
+        CodeRetrievalResult
+
+    异常:
+        FileNotFoundError: 仓库路径不存在
+        ValueError: 没有可索引文件（语义检索时）
+    """
+    repo_path = Path(request.repo_path)
+    if not repo_path.exists():
+        raise FileNotFoundError(f"仓库路径不存在：{repo_path}")
+
+    method = request.search_method
+
+    if method == "semantic":
+        return _retrieve_semantic(request)
+    elif method == "keyword":
+        return _retrieve_keyword(request)
+    elif method == "hybrid":
+        return _retrieve_hybrid(request)
+    else:
+        logger.warning(f"未知检索模式 '{method}'，回退到语义检索")
+        return _retrieve_semantic(request)
