@@ -13,6 +13,7 @@ from app.api.routes import fix_tasks as fix_tasks_router
 from app.api.routes import issue_analysis as issue_analysis_router
 from app.api.routes import code_retrieval as code_retrieval_router
 from app.api.routes import planner as planner_router
+from app.api.routes import workflow as workflow_router
 from app.core.config import get_settings
 from app.db.session import init_db
 
@@ -85,6 +86,8 @@ app.include_router(issue_analysis_router.router)
 app.include_router(code_retrieval_router.router)
 # 注册 Planner 路由（阶段6）
 app.include_router(planner_router.router)
+# 注册 LangGraph Workflow 控制路由（Phase 2）
+app.include_router(workflow_router.router)
 
 
 @app.get("/health", tags=["system"])

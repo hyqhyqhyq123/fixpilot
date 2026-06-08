@@ -1,7 +1,7 @@
 # FixPilot V2 需求规格
 
 > **文档版本**：V2.0  
-> **最后更新**：2026-06-07  
+> **最后更新**：2026-06-08  
 > **说明**：本文档为 FixPilot 统一需求规格，不再区分 MVP / V1。所有条目均为 V2 目标交付范围。
 
 ---
@@ -14,7 +14,7 @@
 | 🔄 进行中 | 部分实现（表/Schema/Tool 有，Agent 或串联未完成） |
 | ⏳ 待做 | 尚未开始或仅有设计 |
 
-**实现状态总览（截至 2026-06-05）**
+**实现状态总览（截至 2026-06-08）**
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
@@ -25,9 +25,9 @@
 | Code Retriever Agent | ✅ 已完成 | semantic + keyword + hybrid + LlamaIndex |
 | Planner Agent | ✅ 已完成 | Agent + API + Schema |
 | Repository Analyst（Tools） | 🔄 进行中 | clone + 分析 tool 有，独立 Agent 未封装 |
-| LangGraph Workflow | ⏳ 待做 | FixPilotState + 13 Node 未实现 |
-| 上下文持久化（State → DB） | ⏳ 待做 | retrieved_contexts / agent_steps 未接入 Agent |
-| 人工审批 API | ⏳ 待做 | approval 表有，approve/reject 未实现 |
+| LangGraph Workflow | 🔄 进行中 | `graph/` + `/start` 线性串联至审批；Coder 后节点待做 |
+| 上下文持久化（State → DB） | 🔄 进行中 | `workflow_runner` 写入 agent_steps / retrieved_contexts |
+| 人工审批 API | 🔄 进行中 | `/approve` `/reject` + approvals 表；cancel 串联待做 |
 | Coder Agent | ⏳ 待做 | — |
 | Tester Agent（Docker） | ⏳ 待做 | — |
 | Failure Diagnosis Agent | ⏳ 待做 | Schema 有，Agent 无 |
@@ -214,7 +214,7 @@ Final Report
 | 5 | Issue Analyst 输出结构化 issue 分析 | ✅ 已完成 |
 | 6 | Code Retriever 检索相关代码（semantic + keyword + hybrid） | ✅ 已完成 |
 | 7 | Planner 生成修改计划 | ✅ 已完成 |
-| 8 | 用户审批修改计划 | ⏳ 待做 |
+| 8 | 用户审批修改计划 | 🔄 进行中（approve/reject API ✅，前端待做） |
 | 9 | Coder 根据计划修改文件 | ⏳ 待做 |
 | 10 | Tester 使用 Docker 运行测试 | ⏳ 待做 |
 | 11 | Failure Diagnosis 分析测试失败 | ⏳ 待做 |
@@ -222,7 +222,7 @@ Final Report
 | 13 | Reviewer 审查 diff | ⏳ 待做 |
 | 14 | PR Writer 生成 PR 文案 | ⏳ 待做 |
 | 15 | 前端展示 Agent 时间线、工具调用、diff 和测试日志 | ⏳ 待做 |
-| 16 | LangGraph Workflow 串联全流程 | ⏳ 待做（**当前重点**） |
+| 16 | LangGraph Workflow 串联全流程 | 🔄 进行中（**当前重点**，Phase 2 线性至审批） |
 
 ### 5.2 V2 标准能力（原 V1 增强）
 
@@ -343,7 +343,7 @@ retry_count < max_retries 则回到 Coder
 
 ---
 
-> **流程实现状态**：创建任务 ✅；Issue/检索/Planner 单 Agent API ✅；LangGraph 自动串联 ⏳；审批/Coder/Tester 及后续 ⏳。
+> **流程实现状态**：创建任务 ✅；单 Agent API ✅；LangGraph 串联至审批 🔄（`POST /start`）；审批 API 🔄；Coder/Tester 及后续 ⏳。
 
 ---
 
@@ -652,7 +652,7 @@ Planner 必须把用户补充要求写入 state。
 ---
 
 
-**实现状态**：⏳ 待做（需 LangGraph + approval 流程）
+**实现状态**：🔄 进行中（`POST /reject` 写入 user_feedback 并重新规划；补充要求 UI 待做）
 ## 7.6 Coder Agent
 
 ### FR-501 生成 Patch
@@ -981,20 +981,20 @@ class FixPilotState(TypedDict):
 
 | Node | 状态 |
 |---|---|
-| intake_node | ⏳ |
-| clone_repo_node | 🔄 Tool ✅ |
-| analyze_repo_node | 🔄 Tool ✅ |
+| intake_node | ✅ |
+| clone_repo_node | ✅ |
+| analyze_repo_node | ✅ |
 | classify_issue_node | ✅ |
 | retrieve_context_node | ✅ |
 | planning_node | ✅ |
-| approval_node | ⏳ |
+| approval_node | 🔄（interrupt + approve/reject API） |
 | edit_code_node | ⏳ |
 | run_tests_node | ⏳ |
 | diagnose_failure_node | ⏳ |
 | retry_decision_node | ⏳ |
 | review_diff_node | ⏳ |
 | pr_writer_node | ⏳ |
-| final_report_node | ⏳ |
+| final_report_node | 🔄（审批后阶段性报告） |
 
 ### 8.3 Edge 设计
 
@@ -1372,8 +1372,8 @@ Issue 文本
 
 | 层级 | 内容 | 持久化 | 状态 |
 |---|---|---|---|
-| FixPilotState | 各 Agent 输出汇总 | LangGraph checkpoint | ⏳ |
-| PostgreSQL | agent_steps、retrieved_contexts 等 | 8 张表 | 🔄 表 ✅，写入 ⏳ |
+| FixPilotState | 各 Agent 输出汇总 | LangGraph checkpoint | 🔄（MemorySaver + `graph/state.py`） |
+| PostgreSQL | agent_steps、retrieved_contexts 等 | 8 张表 | 🔄（Workflow 启动时写入 steps/contexts） |
 | Prompt 截断 | Planner 限制 snippet 行数 | 单次调用 | ✅ |
 
 ---
@@ -1538,12 +1538,12 @@ Issue 文本
 
 交付：
 
-1. State schema。
-2. Coordinator Agent。
-3. Repository Analyst Agent。
-4. Issue Analyst Agent。
-5. 基础 workflow routing。
-6. Agent step 日志。
+1. State schema。✅ 2026-06-08（`graph/state.py`）
+2. Coordinator Agent。🔄 2026-06-08（intake/approval/final_report Node）
+3. Repository Analyst Agent。🔄 2026-06-08（clone/analyze Node，Tool 封装）
+4. Issue Analyst Agent。✅ 2026-06-08（classify_issue_node）
+5. 基础 workflow routing。🔄 2026-06-08（线性至审批，分支节点待做）
+6. Agent step 日志。🔄 2026-06-08（`GET /steps` + agent_steps 写入）
 
 ### Milestone 3：代码检索和规划
 
@@ -1606,8 +1606,8 @@ V2 完成标准（全部达成即 V2 验收通过）：
 3. Repository Analyst 可以分析项目结构。
 4. Issue Analyst 可以输出结构化 issue 分析。
 5. Code Retriever 可以检索相关代码。
-6. Planner 可以生成修改计划。
-7. 用户可以审批或拒绝计划。
+6. Planner 可以生成修改计划。✅ 2026-06-08
+7. 用户可以审批或拒绝计划。🔄 2026-06-08（API ✅，前端待做）
 8. Coder 可以根据计划修改代码。
 9. Tester 可以在 Docker 中运行测试。
 10. Failure Diagnosis 可以分析失败日志。
