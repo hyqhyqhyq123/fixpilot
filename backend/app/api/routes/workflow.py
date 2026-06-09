@@ -77,7 +77,7 @@ async def approve_task_plan(
         ) from exc
 
     return WorkflowActionResponse(
-        message="修改计划已批准",
+        message="修改计划已批准，Coder 与 Tester 已执行完毕",
         task=FixTaskResponse.model_validate(task),
     )
 

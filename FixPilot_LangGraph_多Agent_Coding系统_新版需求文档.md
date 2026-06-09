@@ -1,7 +1,7 @@
 # FixPilot V2 需求规格
 
 > **文档版本**：V2.0  
-> **最后更新**：2026-06-08  
+> **最后更新**：2026-06-09  
 > **说明**：本文档为 FixPilot 统一需求规格，不再区分 MVP / V1。所有条目均为 V2 目标交付范围。
 
 ---
@@ -14,7 +14,7 @@
 | 🔄 进行中 | 部分实现（表/Schema/Tool 有，Agent 或串联未完成） |
 | ⏳ 待做 | 尚未开始或仅有设计 |
 
-**实现状态总览（截至 2026-06-08）**
+**实现状态总览（截至 2026-06-09）**
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
@@ -25,11 +25,11 @@
 | Code Retriever Agent | ✅ 已完成 | semantic + keyword + hybrid + LlamaIndex |
 | Planner Agent | ✅ 已完成 | Agent + API + Schema |
 | Repository Analyst（Tools） | 🔄 进行中 | clone + 分析 tool 有，独立 Agent 未封装 |
-| LangGraph Workflow | 🔄 进行中 | `graph/` + `/start` 线性串联至审批；Coder 后节点待做 |
+| LangGraph Workflow | 🔄 进行中 | 串联至 Coder + Tester；Failure Diagnosis 分支待做 |
 | 上下文持久化（State → DB） | 🔄 进行中 | `workflow_runner` 写入 agent_steps / retrieved_contexts |
 | 人工审批 API | 🔄 进行中 | `/approve` `/reject` + approvals 表；cancel 串联待做 |
-| Coder Agent | ⏳ 待做 | — |
-| Tester Agent（Docker） | ⏳ 待做 | — |
+| Coder Agent | 🔄 进行中 | `coder.py` + `edit_code_node` + edit_history 写入 |
+| Tester Agent（Docker） | 🔄 进行中 | `run_tests_tool.py` + `run_tests_node` + test_runs 写入 |
 | Failure Diagnosis Agent | ⏳ 待做 | Schema 有，Agent 无 |
 | Reviewer Agent | ⏳ 待做 | Schema 有，Agent 无 |
 | PR Writer Agent | ⏳ 待做 | Schema 有，Agent 无 |
@@ -215,8 +215,8 @@ Final Report
 | 6 | Code Retriever 检索相关代码（semantic + keyword + hybrid） | ✅ 已完成 |
 | 7 | Planner 生成修改计划 | ✅ 已完成 |
 | 8 | 用户审批修改计划 | 🔄 进行中（approve/reject API ✅，前端待做） |
-| 9 | Coder 根据计划修改文件 | ⏳ 待做 |
-| 10 | Tester 使用 Docker 运行测试 | ⏳ 待做 |
+| 9 | Coder 根据计划修改文件 | 🔄 进行中（approve 后自动执行） |
+| 10 | Tester 使用 Docker 运行测试 | 🔄 进行中（需本机 Docker） |
 | 11 | Failure Diagnosis 分析测试失败 | ⏳ 待做 |
 | 12 | 最多自动重试 2 次 | ⏳ 待做 |
 | 13 | Reviewer 审查 diff | ⏳ 待做 |
@@ -343,7 +343,7 @@ retry_count < max_retries 则回到 Coder
 
 ---
 
-> **流程实现状态**：创建任务 ✅；单 Agent API ✅；LangGraph 串联至审批 🔄（`POST /start`）；审批 API 🔄；Coder/Tester 及后续 ⏳。
+> **流程实现状态**：创建任务 ✅；单 Agent API ✅；LangGraph 至审批 🔄；approve 后 Coder+Tester 🔄；Failure Diagnosis 及后续 ⏳。
 
 ---
 
@@ -598,7 +598,7 @@ Agent 可以读取文件内容。
 ---
 
 
-**实现状态**：⏳ 待做（`read_file_tool` 未实现）
+**实现状态**：✅ 已完成（`read_file_tool.py`，30KB 分段 + 路径校验）
 ## 7.5 Planner Agent
 
 ### FR-401 生成修改计划
@@ -676,7 +676,7 @@ Coder 根据审批计划生成 patch。
 ```
 
 
-**实现状态**：⏳ 待做
+**实现状态**：🔄 进行中（`coder.py` 整文件替换 + LLM 生成；测试: 需 LLM）
 ### FR-502 修改限制
 
 Coder 只能修改计划中允许的文件。
@@ -689,7 +689,7 @@ Coder 只能修改计划中允许的文件。
 4. 修改后必须生成 git diff。
 
 
-**实现状态**：⏳ 待做
+**实现状态**：🔄 进行中（`allowed_files` 白名单 + 快照回滚 + diff；测试: test_edit_file_tool.py）
 ### FR-503 新增测试
 
 如果项目存在测试目录，Coder 应尝试新增或更新测试。
@@ -703,7 +703,7 @@ Coder 只能修改计划中允许的文件。
 ---
 
 
-**实现状态**：⏳ 待做
+**实现状态**：🔄 进行中（`test_note` 字段；自动补测试依赖 LLM）
 ## 7.7 Tester Agent
 
 ### FR-601 Docker 沙箱执行
@@ -721,7 +721,7 @@ Tester 在 Docker 沙箱运行测试。
 | Network | V2 可开启，后期可限制 |
 
 
-**实现状态**：⏳ 待做
+**实现状态**：🔄 进行中（`run_tests_tool.py` Docker 沙箱；测试: 需本机 Docker）
 ### FR-602 自动检测测试命令
 
 规则：

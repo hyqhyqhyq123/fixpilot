@@ -14,8 +14,10 @@ from app.graph.state import FixPilotState
 from app.graph.workflow import get_workflow_app
 from app.models.agent_step import AgentStep, StepStatus
 from app.models.approval import Approval, ApprovalStatus, ApprovalType
+from app.models.edit_history import EditHistory
 from app.models.fix_task import FixTask, TaskStatus
 from app.models.retrieved_context import RetrievedContext
+from app.models.test_run import TestRun
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +29,16 @@ NODE_AGENT_MAP: dict[str, str] = {
     "retrieve_context_node": "code_retriever",
     "planning_node": "planner",
     "approval_node": "coordinator",
+    "edit_code_node": "coder",
+    "run_tests_node": "tester",
     "final_report_node": "coordinator",
 }
+
+POST_APPROVAL_SEQUENCE: list[tuple[str, Any]] = [
+    ("edit_code_node", nodes.edit_code_node),
+    ("run_tests_node", nodes.run_tests_node),
+    ("final_report_node", nodes.final_report_node),
+]
 
 PRE_APPROVAL_SEQUENCE: list[tuple[str, Any]] = [
     ("intake_node", nodes.intake_node),
@@ -103,6 +113,14 @@ def _summarize_node_io(
                 "files_to_add": len(plan.get("files_to_add") or []),
             }
         )
+
+    if node_name == "edit_code_node":
+        output_summary["edited_files"] = len(updates.get("edit_history") or [])
+
+    if node_name == "run_tests_node" and updates.get("test_results"):
+        last = updates["test_results"][-1]
+        output_summary["test_passed"] = last.get("passed")
+        output_summary["test_command"] = last.get("command")
 
     if updates.get("error_message"):
         output_summary["error_message"] = updates["error_message"]
@@ -183,9 +201,20 @@ async def _resume_after_approval(
         app.update_state(config, state)
         return state, step_records, True
 
-    state, report_record = await _run_node("final_report_node", nodes.final_report_node, state)
-    step_records.append(report_record)
-    app.update_state(config, state)
+    for node_name, node_fn in POST_APPROVAL_SEQUENCE:
+        state, record = await _run_node(node_name, node_fn, state)
+        step_records.append(record)
+        app.update_state(config, state)
+
+        # Coder 失败则跳过测试，直接生成最终报告
+        if node_name == "edit_code_node" and state.get("error_message"):
+            state, report_record = await _run_node(
+                "final_report_node", nodes.final_report_node, state
+            )
+            step_records.append(report_record)
+            app.update_state(config, state)
+            break
+
     return state, step_records, False
 
 
@@ -202,6 +231,45 @@ async def _persist_steps(db: AsyncSession, task_id: int, step_records: list[dict
                 error_message=record.get("error_message"),
                 started_at=record.get("started_at") or datetime.now(timezone.utc),
                 ended_at=record.get("ended_at") or datetime.now(timezone.utc),
+            )
+        )
+
+
+async def _persist_edit_history(
+    db: AsyncSession,
+    task_id: int,
+    edit_records: list[dict[str, Any]],
+) -> None:
+    for item in edit_records:
+        db.add(
+            EditHistory(
+                task_id=task_id,
+                retry_index=item.get("retry_index", 0),
+                file_path=item["file_path"],
+                before_content=item.get("before_content"),
+                after_content=item.get("after_content"),
+                diff=item.get("diff"),
+            )
+        )
+
+
+async def _persist_test_runs(
+    db: AsyncSession,
+    task_id: int,
+    test_results: list[dict[str, Any]],
+    retry_index: int,
+) -> None:
+    for item in test_results:
+        db.add(
+            TestRun(
+                task_id=task_id,
+                retry_index=retry_index,
+                command=item["command"],
+                exit_code=item["exit_code"],
+                stdout=item.get("stdout"),
+                stderr=item.get("stderr"),
+                duration_ms=item.get("duration_ms"),
+                passed=item.get("passed", False),
             )
         )
 
@@ -293,6 +361,12 @@ async def approve_plan(db: AsyncSession, task_id: int, comment: str | None = Non
     state, step_records, _ = await _resume_after_approval(task_id, state)
 
     await _persist_steps(db, task_id, step_records)
+    if state.get("edit_history"):
+        await _persist_edit_history(db, task_id, state["edit_history"])
+    if state.get("test_results"):
+        await _persist_test_runs(
+            db, task_id, state["test_results"], state.get("retry_count", 0)
+        )
     await _sync_task_from_state(db, task, state)
     await db.flush()
     await db.refresh(task)

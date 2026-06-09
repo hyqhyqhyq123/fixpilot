@@ -9,8 +9,10 @@ import logging
 from typing import Any
 
 from app.agents.code_retriever import retrieve_code
+from app.agents.coder import apply_approved_plan
 from app.agents.issue_analyst import analyze_issue
 from app.agents.planner import generate_fix_plan
+from app.tools.run_tests_tool import run_tests_in_docker
 from app.graph.state import FixPilotState
 from app.schemas.code_retrieval import CodeRetrievalRequest
 from app.schemas.issue_analysis import IssueAnalysisRequest
@@ -199,6 +201,105 @@ def planning_node(state: FixPilotState) -> dict[str, Any]:
     }
 
 
+def edit_code_node(state: FixPilotState) -> dict[str, Any]:
+    """Coder：根据已审批计划修改代码。"""
+    repo_path = state.get("repo_path")
+    plan = state.get("plan")
+    allowed_files = state.get("allowed_files") or []
+
+    if not repo_path or not plan:
+        return {
+            "current_node": "edit_code_node",
+            "status": "failed",
+            "final_status": "failed",
+            "error_message": "缺少 repo_path 或 plan，无法执行 Coder",
+        }
+
+    if not allowed_files:
+        return {
+            "current_node": "edit_code_node",
+            "status": "failed",
+            "final_status": "failed",
+            "error_message": "allowed_files 为空，无法执行 Coder",
+        }
+
+    logger.info(f"edit_code_node：task_id={state.get('task_id')}")
+    result = apply_approved_plan(
+        repo_path=repo_path,
+        issue_text=state["issue_text"],
+        plan=plan,
+        allowed_files=allowed_files,
+        retry_index=state.get("retry_count", 0),
+    )
+
+    if not result.success:
+        return {
+            "current_agent": "coder",
+            "current_node": "edit_code_node",
+            "status": "failed",
+            "final_status": "failed",
+            "error_message": result.error_message,
+        }
+
+    edit_history = list(state.get("edit_history") or [])
+    edit_history.extend(result.edit_records)
+
+    return {
+        "current_agent": "coder",
+        "current_node": "edit_code_node",
+        "edit_history": edit_history,
+        "current_diff": result.combined_diff,
+        "status": "running",
+    }
+
+
+def run_tests_node(state: FixPilotState) -> dict[str, Any]:
+    """Tester：在 Docker 沙箱中运行测试。"""
+    repo_path = state.get("repo_path")
+    test_command = state.get("test_command")
+
+    if not repo_path:
+        return {
+            "current_node": "run_tests_node",
+            "status": "failed",
+            "final_status": "failed",
+            "error_message": "repo_path 为空，无法运行测试",
+        }
+
+    if not test_command:
+        logger.warning("未配置 test_command，跳过 Docker 测试")
+        return {
+            "current_agent": "tester",
+            "current_node": "run_tests_node",
+            "status": "running",
+        }
+
+    project_info = state.get("project_info") or {}
+    project_type = project_info.get("primary_type")
+
+    logger.info(f"run_tests_node：cmd={test_command}")
+    test_result = run_tests_in_docker(
+        repo_path=repo_path,
+        command=test_command,
+        project_type=project_type,
+    )
+
+    test_results = list(state.get("test_results") or [])
+    test_results.append(test_result.model_dump())
+
+    updates: dict[str, Any] = {
+        "current_agent": "tester",
+        "current_node": "run_tests_node",
+        "test_results": test_results,
+        "status": "running",
+    }
+
+    if not test_result.passed:
+        updates["error_message"] = test_result.error_message or "测试未通过"
+
+    return updates
+
+
 def approval_node(state: FixPilotState) -> dict[str, Any]:
     """审批节点：实际审批结果由 API 写入 State 后恢复执行。"""
     logger.info(
@@ -217,24 +318,42 @@ def final_report_node(state: FixPilotState) -> dict[str, Any]:
     plan = state.get("plan") or {}
     error_message = state.get("error_message")
 
-    if error_message:
-        report = f"任务执行失败：{error_message}"
-        final_status = "failed"
-        status = "failed"
-    elif approval_status == "cancelled":
+    if approval_status == "cancelled":
         report = "任务已被用户取消。"
         final_status = "cancelled"
         status = "cancelled"
     elif approval_status == "approved":
+        edit_count = len(state.get("edit_history") or [])
+        test_results = state.get("test_results") or []
+        last_test = test_results[-1] if test_results else None
+        test_line = "未运行测试"
+        if last_test:
+            test_line = (
+                f"{'通过' if last_test.get('passed') else '失败'}"
+                f"（{last_test.get('command')}）"
+            )
         report = (
-            "修改计划已批准。\n"
+            "修复流程已完成（Phase 3：Coder + Tester）。\n"
             f"- 问题摘要：{plan.get('problem_summary', '无')}\n"
-            f"- 计划修改文件数：{len(plan.get('files_to_modify', []))}\n"
-            f"- 计划新增文件数：{len(plan.get('files_to_add', []))}\n"
-            "Coder Agent 将在 Phase 3 根据本计划修改代码。"
+            f"- 修改文件数：{edit_count}\n"
+            f"- 测试结果：{test_line}\n"
+            f"- diff 长度：{len(state.get('current_diff') or '')} 字符"
         )
-        final_status = "plan_approved"
-        status = "running"
+        if last_test and not last_test.get("passed"):
+            report += f"\n- 测试错误：{state.get('error_message') or '测试未通过'}"
+            final_status = "tests_failed"
+            status = "failed"
+        elif error_message and not edit_count:
+            report = f"Coder 执行失败：{error_message}"
+            final_status = "failed"
+            status = "failed"
+        else:
+            final_status = "success"
+            status = "success"
+    elif error_message:
+        report = f"任务执行失败：{error_message}"
+        final_status = "failed"
+        status = "failed"
     elif approval_status == "rejected":
         report = "修改计划被拒绝，已根据用户反馈重新生成计划，请再次审批。"
         final_status = "waiting_approval"

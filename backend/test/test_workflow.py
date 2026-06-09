@@ -27,6 +27,8 @@ def test_workflow_compiles():
         "retrieve_context_node",
         "planning_node",
         "approval_node",
+        "edit_code_node",
+        "run_tests_node",
         "final_report_node",
     }
     missing = expected - node_names
