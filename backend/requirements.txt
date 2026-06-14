@@ -16,10 +16,11 @@ psycopg2-binary==2.9.10   # PostgreSQL 同步驱动（Alembic 需要）
 # ── 数据校验 ──────────────────────────────────────────────
 pydantic==2.13.4          # 数据验证和序列化，LangGraph State 也用它（LlamaIndex 需要 >=2.10）
 pydantic-settings==2.5.2  # 从 .env 文件读配置
+email-validator==2.2.0    # Pydantic EmailStr 校验
 
 # ── 认证 ──────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0  # JWT token 生成和验证
-passlib[bcrypt]==1.7.4            # 密码哈希
+bcrypt==4.2.1                     # 密码哈希（直接使用，避免 passlib 兼容问题）
 
 # ── 任务队列 ──────────────────────────────────────────────
 celery==5.4.0             # 后台异步任务，Agent workflow 在后台跑
@@ -36,6 +37,8 @@ langgraph==1.2.2          # LangGraph：构建多节点 Agent workflow
 # llama-index-embeddings-openai：使用 OpenAI text-embedding-3-small 向量化代码
 llama-index-core==0.14.22
 llama-index-embeddings-openai==0.6.0
+rank-bm25==0.2.2          # 本地 BM25 稀疏检索，用来增强 hybrid retrieval，不需要额外服务
+pgvector==0.3.6           # PostgreSQL pgvector 扩展的 Python 支持，用于持久化 embedding
 
 # ── Git 操作 ──────────────────────────────────────────────
 gitpython==3.1.43         # 用 Python 操作 Git（clone、diff 等）
@@ -43,3 +46,10 @@ gitpython==3.1.43         # 用 Python 操作 Git（clone、diff 等）
 # ── 工具 ──────────────────────────────────────────────────
 python-dotenv==1.0.1      # 读取 .env 文件
 httpx==0.27.2             # 异步 HTTP 客户端
+
+# ── 可观测性 ──────────────────────────────────────────────
+prometheus-client==0.21.1 # Prometheus 指标导出
+opentelemetry-api==1.29.0
+opentelemetry-sdk==1.29.0
+opentelemetry-instrumentation-fastapi==0.50b0
+opentelemetry-exporter-otlp-proto-http==1.29.0

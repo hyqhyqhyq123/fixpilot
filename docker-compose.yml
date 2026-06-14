@@ -1,15 +1,28 @@
 # docker-compose.yml
-# 作用：用一个命令启动本地开发所需的所有服务（PostgreSQL + Redis）
-# 为什么需要它：开发时不想在本机直接安装数据库，用 Docker 容器更干净，
-#              每个人电脑上跑起来的环境都一样。
+# 本地开发：PostgreSQL + Redis + 可选 Backend API + Celery Worker
+#
+# 仅数据库：
+#   docker compose up -d postgres redis
+#
+# 全栈（API + Worker 都在容器里）：
+#   docker compose up -d postgres redis backend celery_worker
+#   确认宿主机未占用 8000 端口（勿同时跑 uvicorn）
+#   cd backend && python test/smoke_docker_full_stack.py
+#
+# 混合模式（宿主机跑 API/前端，容器只跑 Worker）：
+#   docker compose up -d postgres redis celery_worker
+#   宿主机 backend/.env 保持 localhost + USE_CELERY=true
 
-version: "3.9"
+x-backend-env: &backend-env
+  USE_CELERY: "true"
+  REDIS_URL: redis://redis:6379/0
+  DATABASE_URL: postgresql+asyncpg://fixpilot:fixpilot123@postgres:5432/fixpilot_db
+  DATABASE_URL_SYNC: postgresql+psycopg2://fixpilot:fixpilot123@postgres:5432/fixpilot_db
+  WORKSPACE_BASE_PATH: /app/workspaces
 
 services:
-
-  # PostgreSQL：关系型数据库，用来存任务、Agent 步骤、工具调用记录等
   postgres:
-    image: postgres:15
+    image: pgvector/pgvector:pg15
     container_name: fixpilot_postgres
     restart: unless-stopped
     environment:
@@ -17,17 +30,76 @@ services:
       POSTGRES_PASSWORD: fixpilot123
       POSTGRES_DB: fixpilot_db
     ports:
-      - "5432:5432"          # 把容器内 5432 端口映射到宿主机 5432
+      - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data  # 数据持久化，重启不丢数据
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fixpilot -d fixpilot_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
-  # Redis：内存数据库，用来做任务队列（Celery）和缓存
   redis:
     image: redis:7-alpine
     container_name: fixpilot_redis
     restart: unless-stopped
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fixpilot_backend
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    working_dir: /app
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *backend-env
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    volumes:
+      - ./backend:/app
+      - ./workspaces:/app/workspaces
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fixpilot_celery
+    restart: unless-stopped
+    command: celery -A app.celery_app.celery_app worker --loglevel=info --concurrency=1 -n docker@%h
+    working_dir: /app
+    environment:
+      <<: *backend-env
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - ./workspaces:/app/workspaces
 
 volumes:
-  postgres_data:  # 命名卷，由 Docker 管理，数据不会因为容器删除而丢失
+  postgres_data:

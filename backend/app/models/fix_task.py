@@ -8,7 +8,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Integer, String, Text, func
+from sqlalchemy import DateTime, Enum, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -39,6 +39,12 @@ class FixTask(Base):
     字段说明见需求文档表格，每个字段都有对应的用途注释。
     """
     __tablename__ = "fix_tasks"
+    __table_args__ = (
+        # 任务列表页经常按 status 过滤，再按 created_at 倒序展示。
+        # 复合索引可以减少数据库先过滤再排序的成本。
+        Index("ix_fix_tasks_status_created_at", "status", "created_at"),
+        Index("ix_fix_tasks_created_at", "created_at"),
+    )
 
     # ── 主键 ──────────────────────────────────────────────────
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

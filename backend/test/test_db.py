@@ -1,15 +1,39 @@
 # backend/test_db.py
-# 测试数据库建表是否正常：7 张表都能创建，基本 CRUD 能跑通
+# 测试数据库建表是否正常：12 张表都能创建，基本 CRUD 能跑通
 
 import asyncio
-import sys
-import os
 
-# 把 backend 目录加入 Python 路径
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import pytest
+from sqlalchemy import inspect
 
-from sqlalchemy import text
 from app.db.session import engine, init_db
+
+pytestmark = pytest.mark.anyio
+
+
+EXPECTED_TABLES = {
+    "fix_tasks",
+    "agent_steps",
+    "tool_calls",
+    "retrieved_contexts",
+    "edit_history",
+    "test_runs",
+    "approvals",
+    "users",
+    "user_settings",
+    "task_github_prs",
+    "task_evaluations",
+    "workflow_checkpoints",
+}
+
+
+async def _list_table_names() -> set[str]:
+    """用 SQLAlchemy inspect 查询表名，兼容 PostgreSQL 和 SQLite。"""
+
+    async with engine.connect() as conn:
+        return await conn.run_sync(
+            lambda sync_conn: set(inspect(sync_conn).get_table_names())
+        )
 
 
 async def test_init_db():
@@ -21,34 +45,17 @@ async def test_init_db():
     await init_db()
     print("[OK] init_db() 执行成功")
 
-    # 查询数据库里现有的表名，验证 7 张表都被创建了
-    expected_tables = {
-        "fix_tasks",
-        "agent_steps",
-        "tool_calls",
-        "retrieved_contexts",
-        "edit_history",
-        "test_runs",
-        "approvals",
-    }
-
-    async with engine.connect() as conn:
-        result = await conn.execute(text(
-            "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
-        ))
-        existing_tables = {row[0] for row in result.fetchall()}
+    # 这里不用 PostgreSQL 专属的 pg_tables，避免 SQLite 测试库无法运行。
+    existing_tables = await _list_table_names()
 
     print(f"\n数据库中发现的表：{sorted(existing_tables)}")
 
-    missing = expected_tables - existing_tables
-    if missing:
-        print(f"\n❌ 缺少以下表：{missing}")
-        return False
+    missing = EXPECTED_TABLES - existing_tables
+    assert not missing, f"缺少以下表：{missing}"
 
-    print(f"\n[OK] 所有 {len(expected_tables)} 张表已创建：")
-    for t in sorted(expected_tables):
+    print(f"\n[OK] 所有 {len(EXPECTED_TABLES)} 张表已创建：")
+    for t in sorted(EXPECTED_TABLES):
         print(f"   - {t}")
-    return True
 
 
 async def test_create_fix_task():
@@ -77,6 +84,18 @@ async def test_create_fix_task():
         task_id = task.id
 
     return task_id
+
+
+@pytest.fixture
+async def task_id() -> int:
+    """为依赖 task_id 的表测试创建一条任务。
+
+    pytest 的测试函数彼此独立，不能依赖上一个测试的 return 值。
+    所以这里用 fixture 显式准备一条 FixTask。
+    """
+
+    await init_db()
+    return await test_create_fix_task()
 
 
 async def test_create_agent_step(task_id: int):
@@ -165,10 +184,7 @@ async def main():
     print("\n[START] FixPilot 数据库测试开始\n")
 
     # 1. 建表
-    ok = await test_init_db()
-    if not ok:
-        print("\n❌ 建表失败，中止测试")
-        return
+    await test_init_db()
 
     # 2. 测试各表的增删
     task_id = await test_create_fix_task()

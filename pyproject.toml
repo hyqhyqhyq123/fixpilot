@@ -1,0 +1,63 @@
+[tool.pytest.ini_options]
+testpaths = ["backend/test"]
+python_files = ["test_*.py", "smoke_*.py"]
+addopts = "-q"
+
+[tool.coverage.run]
+branch = true
+source = ["backend/app"]
+omit = [
+    "backend/app/**/__init__.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 55
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["backend/app", "backend/test"]
+extend-exclude = [
+    "backend/alembic/versions",
+    "backend/test/_tmp_alembic",
+    "backend/test/_gh_pr_tmp",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+]
+ignore = [
+    "E501",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = []
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+exclude = [
+    "backend/alembic/versions",
+    "backend/test/_tmp_alembic",
+    "backend/test/_gh_pr_tmp",
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "app.agents.*",
+    "app.tools.*",
+]
+disable_error_code = ["attr-defined", "no-any-return"]

@@ -16,17 +16,31 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+engine_kwargs = {
+    "echo": settings.debug,       # debug 模式打印 SQL，方便排查问题
+    "pool_pre_ping": True,        # 每次使用连接前先 ping 一下，自动重连断开的连接
+}
+
+# 测试环境常用 SQLite；它没有 PostgreSQL 那种连接池和 SSL 参数。
+# 按数据库类型拆开配置，可以让同一套 DB 代码同时支持本地测试和 Docker PostgreSQL。
+if settings.database_url.startswith("sqlite"):
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+else:
+    engine_kwargs.update(
+        {
+            "pool_size": 10,       # 连接池大小：同时最多维持 10 个数据库连接
+            "max_overflow": 20,    # 超出 pool_size 后最多再开 20 个临时连接
+            # asyncpg 默认尝试 SSL 连接，本地 Docker 没有配置 SSL 会失败
+            # ssl=False 直接告诉 asyncpg 不要用 SSL，避免多余的失败重试
+            "connect_args": {"ssl": False},
+        }
+    )
+
 # 创建异步数据库引擎
 # echo=True 时会把每条 SQL 打印到日志，开发调试很有用，生产环境建议关闭
 engine = create_async_engine(
     settings.database_url,
-    echo=settings.debug,       # debug 模式打印 SQL，方便排查问题
-    pool_pre_ping=True,        # 每次使用连接前先 ping 一下，自动重连断开的连接
-    pool_size=10,              # 连接池大小：同时最多维持 10 个数据库连接
-    max_overflow=20,           # 超出 pool_size 后最多再开 20 个临时连接
-    # asyncpg 默认尝试 SSL 连接，本地 Docker 没有配置 SSL 会失败
-    # ssl=False 直接告诉 asyncpg 不要用 SSL，避免多余的失败重试
-    connect_args={"ssl": False},
+    **engine_kwargs,
 )
 
 # 创建 Session 工厂
@@ -80,8 +94,14 @@ async def init_db() -> None:
     import app.models.edit_history       # noqa: F401
     import app.models.test_run           # noqa: F401
     import app.models.approval           # noqa: F401
+    import app.models.user               # noqa: F401
+    import app.models.user_settings      # noqa: F401
+    import app.models.task_github_pr     # noqa: F401
+    import app.models.task_evaluation    # noqa: F401
+    import app.models.workflow_checkpoint  # noqa: F401
+    import app.models.task_status_transition  # noqa: F401
 
     async with engine.begin() as conn:
         # checkfirst=True 表示"表不存在才创建"，不会删除已有数据
         await conn.run_sync(Base.metadata.create_all)
-        logger.info("数据库表初始化完成（共 7 张表）")
+        logger.info("数据库表初始化完成（共 13 张表）")

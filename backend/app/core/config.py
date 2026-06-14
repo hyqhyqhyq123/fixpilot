@@ -23,13 +23,28 @@ class Settings(BaseSettings):
     database_url: str
     database_url_sync: str
 
-    # Redis
+    # Redis / Celery
     redis_url: str = "redis://localhost:6379/0"
+    use_celery: bool = False
+    celery_broker_url: str = ""
+    celery_result_backend: str = ""
+    celery_task_always_eager: bool = False
+
+    @property
+    def resolved_celery_broker_url(self) -> str:
+        return self.celery_broker_url or self.redis_url
+
+    @property
+    def resolved_celery_result_backend(self) -> str:
+        return self.celery_result_backend or self.redis_url
 
     # JWT 认证
     secret_key: str
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
+    github_oauth_client_id: str = ""
+    github_oauth_client_secret: str = ""
+    github_oauth_redirect_uri: str = "http://localhost:3000/login"
 
     # LLM（DeepSeek 兼容 OpenAI 接口）
     openai_api_key: str
@@ -38,6 +53,20 @@ class Settings(BaseSettings):
 
     # Workspace：每个任务 clone repo 的根目录
     workspace_base_path: str = "../workspaces"
+
+    # 可观测性
+    # Prometheus 是常见监控系统，/metrics 会暴露请求量、状态码和耗时指标。
+    enable_prometheus: bool = True
+    # OpenTelemetry 是标准化链路追踪协议；默认关闭，避免本地没部署 collector 时产生噪声。
+    enable_opentelemetry: bool = False
+    otel_service_name: str = "fixpilot-api"
+    otel_exporter_otlp_endpoint: str = ""
+
+    # 向量持久化
+    # local 表示继续用当前本地检索；pgvector 表示把 embedding 存到 PostgreSQL。
+    vector_store_provider: str = "local"
+    pgvector_table_name: str = "code_embeddings"
+    pgvector_embedding_dim: int = 1536
 
     model_config = {
         "env_file": ".env",

@@ -1,0 +1,25 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.14.1
+    hooks:
+      - id: mypy
+        additional_dependencies:
+          - pydantic==2.13.4
+          - pydantic-settings==2.5.2
+          - sqlalchemy==2.0.35
+        args: [--config-file=pyproject.toml]
+
+  - repo: local
+    hooks:
+      - id: backend-tests
+        name: backend focused tests
+        entry: python -m pytest backend/test/test_task_state_machine.py backend/test/test_task_status_audit.py backend/test/test_retrieval_benchmark.py backend/test/test_real_issue_rag_benchmark.py backend/test/test_trace_aggregate_metrics.py
+        language: system
+        pass_filenames: false

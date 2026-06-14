@@ -8,7 +8,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -21,6 +21,10 @@ class RetrievedContext(Base):
     每条记录是一个检索到的代码片段。
     """
     __tablename__ = "retrieved_contexts"
+    __table_args__ = (
+        # 任务详情页按 task_id 查检索片段，并按 score 排序展示最相关结果。
+        Index("ix_retrieved_contexts_task_score_id", "task_id", "score", "id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 

@@ -12,11 +12,15 @@ import enum
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+
+# PostgreSQL 生产环境使用 JSONB；SQLite 测试环境自动退回通用 JSON。
+# 这样既保留线上查询能力，也让初学者可以不启动 PostgreSQL 先跑本地单测。
+JSON_SUMMARY_TYPE = JSON().with_variant(JSONB, "postgresql")
 
 
 class StepStatus(str, enum.Enum):
@@ -34,6 +38,10 @@ class AgentStep(Base):
     每个 FixTask 可以有多条 AgentStep 记录，通过 task_id 关联。
     """
     __tablename__ = "agent_steps"
+    __table_args__ = (
+        # Trace 页按 task_id 拉取步骤，并按 started_at 展示时间线。
+        Index("ix_agent_steps_task_started", "task_id", "started_at"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
@@ -62,14 +70,14 @@ class AgentStep(Base):
         nullable=False,
     )
 
-    # JSONB 是 PostgreSQL 的 JSON 二进制存储格式，支持索引查询，比 Text 快
+    # PostgreSQL 下实际是 JSONB，SQLite 测试下是普通 JSON。
     # input_summary：这个 Agent 收到的输入摘要（不是完整数据，是摘要，节省空间）
     input_summary: Mapped[Optional[Dict[str, Any]]] = mapped_column(
-        JSONB, nullable=True
+        JSON_SUMMARY_TYPE, nullable=True
     )
     # output_summary：这个 Agent 输出的摘要
     output_summary: Mapped[Optional[Dict[str, Any]]] = mapped_column(
-        JSONB, nullable=True
+        JSON_SUMMARY_TYPE, nullable=True
     )
 
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

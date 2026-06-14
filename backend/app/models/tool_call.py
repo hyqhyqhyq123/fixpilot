@@ -12,11 +12,14 @@ import enum
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, func
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Index, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+
+# PostgreSQL 生产环境使用 JSONB；SQLite 测试环境自动退回通用 JSON。
+JSON_SUMMARY_TYPE = JSON().with_variant(JSONB, "postgresql")
 
 
 class PermissionLevel(str, enum.Enum):
@@ -39,6 +42,10 @@ class ToolCall(Base):
     每条记录对应一次工具调用。
     """
     __tablename__ = "tool_calls"
+    __table_args__ = (
+        # 工具审计页按 task_id 查，再按 created_at 还原调用顺序。
+        Index("ix_tool_calls_task_created", "task_id", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
@@ -70,10 +77,10 @@ class ToolCall(Base):
     )
 
     input_summary: Mapped[Optional[Dict[str, Any]]] = mapped_column(
-        JSONB, nullable=True, comment="工具输入摘要"
+        JSON_SUMMARY_TYPE, nullable=True, comment="工具输入摘要"
     )
     output_summary: Mapped[Optional[Dict[str, Any]]] = mapped_column(
-        JSONB, nullable=True, comment="工具输出摘要"
+        JSON_SUMMARY_TYPE, nullable=True, comment="工具输出摘要"
     )
 
     status: Mapped[ToolCallStatus] = mapped_column(

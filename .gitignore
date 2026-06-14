@@ -13,6 +13,13 @@ venv/
 *.egg-info/
 dist/
 build/
+*.db
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tmp_pycache/
 
 # Node.js（前端后续会用到）
 node_modules/
@@ -32,3 +39,7 @@ Thumbs.db
 
 # 任务 workspace（包含克隆的仓库，不应提交）
 workspaces/
+outputs/
+
+# 测试运行时生成的临时仓库
+backend/test/_gh_pr_tmp/
