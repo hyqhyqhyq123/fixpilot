@@ -1,7 +1,7 @@
 # FixPilot V2 需求规格
 
 > **文档版本**：V2.0  
-> **最后更新**：2026-06-09  
+> **最后更新**：2026-06-14
 > **说明**：本文档为 FixPilot 统一需求规格，不再区分 MVP / V1。所有条目均为 V2 目标交付范围。
 
 ---
@@ -14,31 +14,34 @@
 | 🔄 进行中 | 部分实现（表/Schema/Tool 有，Agent 或串联未完成） |
 | ⏳ 待做 | 尚未开始或仅有设计 |
 
-**实现状态总览（截至 2026-06-09）**
+**实现状态总览（截至 2026-06-14）**
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
 | 后端骨架（FastAPI + Config + Docker Compose） | ✅ 已完成 | health、CORS、PostgreSQL、Redis |
 | 任务系统（fix_tasks CRUD） | ✅ 已完成 | 创建/列表/详情/取消 |
-| 数据库模型（8 张表） | ✅ 已完成 | 模型已建，部分未写入业务逻辑 |
+| 数据库模型（12 张表） | ✅ 已完成 | 含 task_evaluations、workflow_checkpoints；测试: `test_db.py` + `test_workflow_checkpoint.py` |
 | Issue Analyst Agent | ✅ 已完成 | Agent + API + Schema |
-| Code Retriever Agent | ✅ 已完成 | semantic + keyword + hybrid + LlamaIndex |
-| Planner Agent | ✅ 已完成 | Agent + API + Schema |
-| Repository Analyst（Tools） | 🔄 进行中 | clone + 分析 tool 有，独立 Agent 未封装 |
-| LangGraph Workflow | 🔄 进行中 | 串联至 Coder + Tester；Failure Diagnosis 分支待做 |
-| 上下文持久化（State → DB） | 🔄 进行中 | `workflow_runner` 写入 agent_steps / retrieved_contexts |
-| 人工审批 API | 🔄 进行中 | `/approve` `/reject` + approvals 表；cancel 串联待做 |
-| Coder Agent | 🔄 进行中 | `coder.py` + `edit_code_node` + edit_history 写入 |
-| Tester Agent（Docker） | 🔄 进行中 | `run_tests_tool.py` + `run_tests_node` + test_runs 写入 |
-| Failure Diagnosis Agent | ⏳ 待做 | Schema 有，Agent 无 |
-| Reviewer Agent | ⏳ 待做 | Schema 有，Agent 无 |
-| PR Writer Agent | ⏳ 待做 | Schema 有，Agent 无 |
-| 用户认证 | ⏳ 待做 | — |
-| Celery 后台任务 | ⏳ 待做 | Redis 已配置，Worker 未接 |
-| 前端（Next.js） | ⏳ 待做 | 目录未创建 |
-| GitHub 集成（OAuth / 创建 PR） | ⏳ 待做 | — |
-| Agent Trace UI | ⏳ 待做 | — |
-| RAG 增强（Query Rewrite + Rerank） | ⏳ 待做 | V2 扩展项 |
+| Code Retriever Agent | ✅ 已完成 | semantic + keyword + hybrid + LlamaIndex + Query Rewrite + LLM Rerank + BM25/RRF；hybrid 本地扫描共用一次文件读取；Python AST chunk + metadata；测试: `test_query_rewrite.py` + `test_rerank.py` + `test_hybrid_bm25_rrf.py` + `test_semantic_chunking.py` |
+| Planner Agent | ✅ 已完成 | Agent + API + Schema + FR-402 计划修订 |
+| Repository Analyst Agent | ✅ 已完成 | `repository_analyst.py` 封装 clone/analyze 工具，节点调用 Agent；支持 Python/TypeScript/Go/Java 样例仓库 E2E；测试: `test_repository_analyst.py` + `test_multilanguage_e2e.py` + `test_workflow.py` |
+| LangGraph Workflow | ✅ 已完成 | `graph/workflow.py` 全流程至 PR 草稿；审批前 `Issue Analyst` + `Code Retriever` 并行执行；GitHub 创建 PR（FR-903）；测试: `test_workflow.py` + `test_workflow_parallel.py` + `test_coder_e2e.py` + `test_github_pr.py` |
+| 上下文持久化（State → DB） | ✅ 已完成 | `workflow_runner` 写入 workflow_checkpoints / steps / edit_history / test_runs / approvals / tool_calls；测试: `test_workflow_checkpoint.py` + `test_workflow_completion.py` + `test_db.py` |
+| 人工审批 API | ✅ 已完成 | `/approve` `/reject` `/cancel` `/approve-diff` `/reject-diff`；计划补充要求 UI + 重新规划；测试: `test_workflow_completion.py` + `npm run build` |
+| Coder Agent | ✅ 已完成 | `coder.py` + 重试 + FR-503 新增测试门禁；测试: `test_coder_e2e.py` + `test_edit_file_tool.py` + `test_coder_test_generation.py` |
+| Tester Agent（Docker） | ✅ 已完成 | FR-601~604；`test_docker_runner.py` |
+| Failure Diagnosis Agent | ✅ 已完成 | FR-701/702；`test_failure_diagnoser.py` |
+| Reviewer Agent | ✅ 已完成 | FR-801/802；`test_reviewer.py` |
+| PR Writer Agent | ✅ 已完成 | FR-901/902；`PRDescription.commit_message` + `github_pr_tool.extract_commit_message`；测试: `test_reviewer.py` + `test_github_pr_tool.py` + `test_github_pr.py` |
+| 用户认证 | ✅ 已完成 | 邮箱密码 + GitHub OAuth；`/api/auth/*` + `/login`；测试: `test_auth.py` + `test_github_oauth.py` + `npm run build` |
+| Celery 后台任务 | ✅ 已完成 | `celery_app.py` + `workflow_tasks.py`；`USE_CELERY=true` + Worker；测试: `test_celery_workflow.py` + `test_celery_tasks.py` |
+| 前端（Next.js） | ✅ 已完成 | Dashboard + 登录 + 设置 + 任务详情 + Trace 回放 + 创建 PR；测试: `npm run build` |
+| Agent Trace UI | ✅ 已完成 | `/tasks/[id]/trace` latency + token + 关联文件 + tool_calls + 任务回放；测试: `test_trace_metrics.py` + `npm run build` |
+| GitHub PR 集成（FR-903） | ✅ 已完成 | `github_pr_tool.py` + `POST /create-pr`；测试: `test_github_pr.py` |
+| GitHub Issue 读取 | ✅ 已完成 | `GET /api/github/issues` + 新建任务页拉取；测试: `test_github_issue.py` |
+| GitHub Actions 结果读取 | ✅ 已完成 | `github_actions_tool.py` + `GET /api/github/actions/runs`；测试: `test_github_actions.py` + `test_github_issue.py` + `test_db.py` |
+| LLM-as-Judge 评测 | ✅ 已完成 | `task_judge.py` + `POST/GET .../evaluation`；测试: `test_evaluation.py` |
+| RAG 增强（Query Rewrite + Rerank + BM25/RRF） | ✅ 已完成 | Query Rewrite ✅；LLM Rerank ✅；BM25 稀疏检索 + RRF 融合 ✅；hybrid 本地扫描共用一次文件读取 ✅；Python AST 函数/类切分 + metadata ✅；检索结果写入 DB ✅；API: `POST /api/code-retrieval` + `GET /api/fix-tasks/{id}/retrieved-contexts`；测试: `test_query_rewrite.py` + `test_rerank.py` + `test_hybrid_bm25_rrf.py` + `test_semantic_chunking.py` + `test_workflow_completion.py` |
 
 ---
 
@@ -207,47 +210,48 @@ Final Report
 
 | # | 交付项 | 状态 |
 |---|---|---|
-| 1 | 用户登录 | ⏳ 待做 |
+| 1 | 用户登录 | ✅ 已完成 | `test_auth.py` + 前端 `/login` |
 | 2 | 用户输入 public GitHub repo URL 和 issue 文本 | ✅ 已完成 |
 | 3 | 系统 clone repo 到独立 workspace | ✅ 已完成（Tool） |
-| 4 | Repository Analyst 识别项目语言、框架、测试命令 | ✅ 已完成（Tool） |
+| 4 | Repository Analyst 识别项目语言、框架、测试命令 | ✅ 已完成（Agent + Tool；`test_repository_analyst.py`） |
 | 5 | Issue Analyst 输出结构化 issue 分析 | ✅ 已完成 |
-| 6 | Code Retriever 检索相关代码（semantic + keyword + hybrid） | ✅ 已完成 |
+| 6 | Code Retriever 检索相关代码（semantic + keyword + hybrid） | ✅ 已完成（hybrid 已补 BM25 + RRF，并共用一次本地文件扫描；测试: `test_hybrid_bm25_rrf.py`） |
 | 7 | Planner 生成修改计划 | ✅ 已完成 |
-| 8 | 用户审批修改计划 | 🔄 进行中（approve/reject API ✅，前端待做） |
-| 9 | Coder 根据计划修改文件 | 🔄 进行中（approve 后自动执行） |
-| 10 | Tester 使用 Docker 运行测试 | 🔄 进行中（需本机 Docker） |
-| 11 | Failure Diagnosis 分析测试失败 | ⏳ 待做 |
-| 12 | 最多自动重试 2 次 | ⏳ 待做 |
-| 13 | Reviewer 审查 diff | ⏳ 待做 |
-| 14 | PR Writer 生成 PR 文案 | ⏳ 待做 |
-| 15 | 前端展示 Agent 时间线、工具调用、diff 和测试日志 | ⏳ 待做 |
-| 16 | LangGraph Workflow 串联全流程 | 🔄 进行中（**当前重点**，Phase 2 线性至审批） |
+| 8 | 用户审批修改计划 | ✅ 已完成 | 任务详情页 approve/reject/cancel + 补充要求重新规划 + diff 二次审批；测试: `test_workflow_completion.py` + `npm run build` |
+| 9 | Coder 根据计划修改文件 | ✅ 已完成 | approve 后自动 Coder→Tester→Review→PR；bug fix 优先补测试；测试: `test_coder_e2e.py` + `test_coder_test_generation.py` |
+| 10 | Tester 使用 Docker 运行测试 / lint / typecheck | ✅ 已完成（`test_docker_runner.py`） |
+| 11 | Failure Diagnosis 分析测试失败 | ✅ 已完成（`test_failure_diagnoser.py`） |
+| 12 | 最多自动重试 2 次 | ✅ 已完成（`retry_decision_node` + max_retries） |
+| 13 | Reviewer 审查 diff | ✅ 已完成（`test_reviewer.py`） |
+| 14 | PR Writer 生成 PR 文案 | ✅ 已完成（`test_reviewer.py`） |
+| 15 | 前端展示 Agent 时间线、工具调用、diff 和测试日志 | ✅ 已完成 | 详情页 + Trace 页；测试: `npm run build` + `test_task_artifacts_api.py` |
+| 16 | LangGraph Workflow 串联全流程 | ✅ 已完成 | `test_workflow.py` + `test_coder_e2e.py` 全节点 E2E |
 
 ### 5.2 V2 标准能力（原 V1 增强）
 
 | # | 能力 | 状态 |
 |---|---|---|
-| 1 | GitHub OAuth | ⏳ 待做 |
-| 2 | 私有 repo 支持 | ⏳ 待做（V3+） |
-| 3 | 自动读取 issue URL | ⏳ 待做 |
+| 1 | GitHub OAuth | ✅ 已完成 | `GET /api/auth/github/authorize` + `POST /api/auth/github/callback` + 登录页按钮；测试: `test_github_oauth.py` + `npm run build` |
+| 3 | 自动读取 issue URL | ✅ 已完成 | `GET /api/github/issues`；测试: `test_github_issue.py` |
 | 4 | LlamaIndex 代码语义检索 | ✅ 已完成 |
-| 5 | 自动创建 branch、commit 和 PR | ⏳ 待做 |
-| 6 | 多 Agent 并行化 | ⏳ 待做（V3+） |
-| 7 | 更细粒度权限控制 | ⏳ 待做 |
-| 8 | 支持 Python、TypeScript、Go、Java | 🔄 进行中（识别 ✅） |
-| 9 | Code Review Agent 独立审查 | ⏳ 待做 |
-| 10 | 回滚到任意 retry step | ⏳ 待做 |
-| 11 | Agent Trace 可视化和任务回放 | ⏳ 待做 |
+| 5 | 自动创建 branch、commit 和 PR | ✅ 已完成 | FR-903；`test_github_pr.py` |
+| 6 | 多 Agent 并行化 | ✅ 已完成 | `workflow_runner._run_parallel_nodes` 在 `analyze_repo_node` 后并行执行 `classify_issue_node` + `retrieve_context_node`；测试: `test_workflow_parallel.py` + `test_workflow_completion.py` |
+| 7 | 更细粒度权限控制 | ✅ 已完成 | `tool_permissions.py` 集中定义 low/medium/high；未知工具默认 high；测试: `test_tool_permissions.py` |
+| 8 | 支持 Python、TypeScript、Go、Java | ✅ 已完成 | Repository Analyst 识别 Python/TypeScript/Go/Java，并将测试/typecheck 命令写入 workflow state；测试: `test_multilanguage_e2e.py` + `test_repository_analyst.py` |
+| 9 | Code Review Agent 独立审查 | ✅ 已完成 | `reviewer.py` 可独立调用 `review_diff` / `review_diff_heuristic`，并接入 `review_diff_node`；测试: `test_reviewer.py` |
+| 10 | 回滚到任意 retry step | ✅ 已完成 | `POST /api/fix-tasks/{task_id}/rollback-retry` 恢复 workspace 到指定 `retry_index` 结束状态；测试: `test_workflow_completion.py` |
+| 11 | Agent Trace 可视化和任务回放 | ✅ 已完成 | `TraceReplayControls` + `/tasks/[id]/trace`；测试: `npm run build` |
+| 12 | GitHub Actions 结果读取 | ✅ 已完成 | `GET /api/github/actions/runs` 读取最近 workflow run 状态；测试: `test_github_actions.py` |
 
 ### 5.3 V2 扩展（RAG 增强 / 评测）
 
 | 能力 | 状态 |
 |---|---|
-| Query Rewrite | ⏳ 待做 |
-| LLM Rerank | ⏳ 待做 |
-| 检索结果写入 retrieved_contexts 表 | ⏳ 待做 |
-| LLM-as-Judge 自动评测 | ⏳ 待做 |
+| Query Rewrite | ✅ 已完成 | `code_retriever.py` 规则改写 issue query；测试: `.venv\Scripts\python.exe -m pytest backend\test\test_query_rewrite.py -q` |
+| LLM Rerank | ✅ 已完成 | `code_retriever.py` 对 semantic / hybrid 候选片段二次排序；测试: `.venv\Scripts\python.exe -m pytest backend\test\test_rerank.py -q` |
+| BM25 + RRF Hybrid Retrieval | ✅ 已完成 | `code_retriever.py` 在 hybrid 中增加 BM25 稀疏检索，并用 RRF 融合 semantic / keyword / BM25；2026-06-14 优化为 keyword/BM25 共用一次本地文件扫描；测试: `.venv\Scripts\python.exe -m pytest backend\test\test_hybrid_bm25_rrf.py -q` |
+| 检索结果写入 retrieved_contexts 表 | ✅ 已完成 | `workflow_runner` 写入 `retrieved_contexts`，并提供 `GET /api/fix-tasks/{id}/retrieved-contexts` 查询；测试: `.venv\Scripts\python.exe -m pytest backend\test\test_workflow_completion.py -q` |
+| LLM-as-Judge 自动评测 | ✅ 已完成 | `test_evaluation.py` |
 
 ---
 
@@ -280,9 +284,9 @@ Coordinator 初始化任务状态
   ↓
 Repository Analyst 分析仓库
   ↓
-Issue Analyst 分析 Issue
-  ↓
-Code Retriever 检索相关文件
+并行执行：
+  ├── Issue Analyst 分析 Issue
+  └── Code Retriever 检索相关文件
   ↓
 Planner 生成修改计划
   ↓
@@ -343,7 +347,7 @@ retry_count < max_retries 则回到 Coder
 
 ---
 
-> **流程实现状态**：创建任务 ✅；单 Agent API ✅；LangGraph 至审批 🔄；approve 后 Coder+Tester 🔄；Failure Diagnosis 及后续 ⏳。
+> **流程实现状态**：创建任务 ✅；approve 后 Coder+Tester+重试+Review+PR 草稿 ✅；GitHub 创建 PR（需登录 + Token）✅。
 
 ---
 
@@ -360,7 +364,7 @@ retry_count < max_retries 则回到 Coder
 - GitHub OAuth
 
 
-**实现状态**：⏳ 待做
+**实现状态**：✅ 已完成（`users` 表 + JWT + `/api/auth/register|login|logout|me` + GitHub OAuth `/api/auth/github/authorize|callback` + 前端 `/login`；测试: `test_auth.py` + `test_github_oauth.py` + `npm run build`）
 
 ### FR-002 创建修复任务
 
@@ -379,7 +383,7 @@ retry_count < max_retries 则回到 Coder
 **验收标准：**
 
 1. repo_url 必须是合法 GitHub URL。
-2. V2 先支持 public repo（私有 repo 见 V3+）。
+2. 当前产品边界：只支持 public repo。
 3. 创建成功后返回 task_id。
 4. 任务初始状态为 pending。
 
@@ -416,7 +420,7 @@ retry_count < max_retries 则回到 Coder
 ---
 
 
-**实现状态**：🔄 进行中（基础详情 ✅，时间线/diff/测试 ⏳）
+**实现状态**：✅ 已完成（`/tasks/[id]` + `/tasks/[id]/trace` + `GET /tool-calls`；测试: `npm run build` + `test_task_artifacts_api.py`）
 ## 7.2 Repository Analyst Agent
 
 ### FR-101 Clone Repo
@@ -457,7 +461,7 @@ retry_count < max_retries 则回到 Coder
 | Cargo.toml | Rust |
 
 
-**实现状态**：✅ 已完成（`repo_analysis_tool.py`）
+**实现状态**：✅ 已完成（`repository_analyst.py` + `repo_analysis_tool.py` + `analyze_repo_node`；测试: `test_repository_analyst.py` + `test_workflow.py`）
 ### FR-103 生成文件树摘要
 
 要求：
@@ -569,7 +573,7 @@ V2 使用 LlamaIndex 对代码库建立索引（**已实现**，默认 semantic 
 ```
 
 
-**实现状态**：✅ 已完成（`semantic_search_tool.py`，semantic 为默认模式）
+**实现状态**：✅ 已完成（`semantic_search_tool.py`，semantic 为默认模式；Python AST 顶层函数/类切分，装饰器归入函数、类方法归入类；chunk 保留 `file_path/language/symbol_name/line_start/line_end`；长片段 50 行兜底；测试: `.venv\Scripts\python.exe -m pytest backend\test\test_semantic_chunking.py -q`）
 ### FR-303 多策略检索
 
 组合：
@@ -583,7 +587,7 @@ Issue keywords
 ```
 
 
-**实现状态**：✅ 已完成（semantic / keyword / hybrid）
+**实现状态**：✅ 已完成（semantic / keyword / hybrid；hybrid 内含 BM25 稀疏检索 + RRF 融合排序，并共用一次本地文件扫描；代码: `backend/app/agents/code_retriever.py`；API: `POST /api/code-retrieval`；测试: `test_hybrid_bm25_rrf.py` + `test_query_rewrite.py` + `test_rerank.py`）
 ### FR-304 读取文件
 
 Agent 可以读取文件内容。
@@ -652,7 +656,7 @@ Planner 必须把用户补充要求写入 state。
 ---
 
 
-**实现状态**：🔄 进行中（`POST /reject` 写入 user_feedback 并重新规划；补充要求 UI 待做）
+**实现状态**：✅ 已完成（`frontend/src/app/tasks/[id]/page.tsx` 补充要求 UI + `POST /api/fix-tasks/{id}/reject` 写入 `user_feedback` 并重新规划；测试: `.venv\Scripts\python.exe -m pytest backend\test\test_workflow_completion.py -q` + `npm run build`）
 ## 7.6 Coder Agent
 
 ### FR-501 生成 Patch
@@ -676,7 +680,7 @@ Coder 根据审批计划生成 patch。
 ```
 
 
-**实现状态**：🔄 进行中（`coder.py` 整文件替换 + LLM 生成；测试: 需 LLM）
+**实现状态**：✅ 已完成（`coder.py` 整文件替换 + LLM 生成；测试: `test_coder_e2e.py`）
 ### FR-502 修改限制
 
 Coder 只能修改计划中允许的文件。
@@ -689,7 +693,7 @@ Coder 只能修改计划中允许的文件。
 4. 修改后必须生成 git diff。
 
 
-**实现状态**：🔄 进行中（`allowed_files` 白名单 + 快照回滚 + diff；测试: test_edit_file_tool.py）
+**实现状态**：✅ 已完成（`allowed_files` 白名单 + 快照回滚 + diff；测试: `test_edit_file_tool.py`）
 ### FR-503 新增测试
 
 如果项目存在测试目录，Coder 应尝试新增或更新测试。
@@ -703,7 +707,7 @@ Coder 只能修改计划中允许的文件。
 ---
 
 
-**实现状态**：🔄 进行中（`test_note` 字段；自动补测试依赖 LLM）
+**实现状态**：✅ 已完成（`repo_analysis_tool.py` 识别测试目录 + `planner.py` 将回归测试写入计划 + `coder.py` 强制修改测试或填写 `test_note`；测试: `.venv\Scripts\python.exe -m pytest backend\test\test_coder_test_generation.py -q`）
 ## 7.7 Tester Agent
 
 ### FR-601 Docker 沙箱执行
@@ -721,7 +725,7 @@ Tester 在 Docker 沙箱运行测试。
 | Network | V2 可开启，后期可限制 |
 
 
-**实现状态**：🔄 进行中（`run_tests_tool.py` Docker 沙箱；测试: 需本机 Docker）
+**实现状态**：✅ 已完成（`run_tests_tool.py` Docker 沙箱；测试: `test_docker_runner.py`）
 ### FR-602 自动检测测试命令
 
 规则：
@@ -735,7 +739,7 @@ Tester 在 Docker 沙箱运行测试。
 | Rust | cargo test |
 
 
-**实现状态**：🔄 进行中（检测 ✅，Docker 执行 ⏳）
+**实现状态**：✅ 已完成（`analyze_repo_node` 自动检测；测试: analyze_repo）
 ### FR-603 运行 lint 和 type check
 
 支持：
@@ -749,7 +753,7 @@ Tester 在 Docker 沙箱运行测试。
 7. cargo clippy
 
 
-**实现状态**：⏳ 待做
+**实现状态**：✅ 已完成（`run_tests_node` 串联 lint/typecheck；测试: `test_run_tests_node.py`）
 ### FR-604 测试结果结构化
 
 输出：
@@ -768,7 +772,7 @@ Tester 在 Docker 沙箱运行测试。
 ---
 
 
-**实现状态**：🔄 进行中（Schema ✅，Agent ⏳）
+**实现状态**：✅ 已完成（`run_tests_node` + `test_runs` 写入；测试: `test_docker_runner.py`）
 ## 7.8 Failure Diagnosis Agent
 
 ### FR-701 错误诊断
@@ -789,7 +793,7 @@ Tester 在 Docker 沙箱运行测试。
 ```
 
 
-**实现状态**：🔄 进行中（Schema ✅，Agent ⏳）
+**实现状态**：✅ 已完成（`failure_diagnoser.py` + `diagnose_failure_node`；测试: `test_failure_diagnoser.py`）
 ### FR-702 有限重试
 
 默认 max_retries = 2。
@@ -804,7 +808,7 @@ Tester 在 Docker 沙箱运行测试。
 ---
 
 
-**实现状态**：⏳ 待做
+**实现状态**：✅ 已完成（`retry_decision_node` + `workflow_runner` 重试循环；测试: `test_failure_diagnoser.py`）
 ## 7.9 Reviewer Agent
 
 ### FR-801 Diff 审查
@@ -820,7 +824,7 @@ Reviewer 检查：
 7. 是否符合 issue 目标。
 
 
-**实现状态**：🔄 进行中（Schema ✅，Agent ⏳）
+**实现状态**：✅ 已完成（`reviewer.py` + `review_diff_node`；测试: `test_reviewer.py`）
 ### FR-802 风险分级
 
 输出：
@@ -844,7 +848,7 @@ Reviewer 检查：
 ---
 
 
-**实现状态**：🔄 进行中（Schema ✅，Agent ⏳）
+**实现状态**：✅ 已完成（`ReviewResult.risk_level` + `issues`；测试: `test_reviewer.py`）
 ## 7.10 PR Writer Agent
 
 ### FR-901 生成 PR 文案
@@ -852,8 +856,6 @@ Reviewer 检查：
 格式：
 
 ```markdown
-
-**实现状态**：🔄 进行中（Schema ✅，Agent ⏳）
 ## Summary
 
 ## Changes
@@ -865,6 +867,8 @@ Reviewer 检查：
 ## Notes
 ```
 
+
+**实现状态**：✅ 已完成（`pr_writer.py` + `pr_writer_node`；测试: `test_reviewer.py`）
 ### FR-902 生成 Commit Message
 
 示例：
@@ -874,7 +878,7 @@ fix: handle empty input in request validator
 ```
 
 
-**实现状态**：⏳ 待做
+**实现状态**：✅ 已完成（`backend/app/schemas/pr_description.py` + `backend/app/agents/pr_writer.py` + `backend/app/tools/github_pr_tool.py` + `POST /api/fix-tasks/{id}/create-pr` 使用显式 commit message；测试: `test_reviewer.py` + `test_github_pr_tool.py` + `test_github_pr.py`）
 ### FR-903 创建 PR（GitHub 集成）
 
 流程：
@@ -899,7 +903,7 @@ return PR URL
 
 ---
 
-**实现状态**：⏳ 待做（V2 后期 GitHub 集成）
+**实现状态**：✅ 已完成（`github_pr_tool.py` + `github_pr_service.py` + `POST /api/fix-tasks/{id}/create-pr` + 前端「创建 GitHub PR」；测试: `test_github_pr.py` + `test_github_pr_tool.py`）
 
 ---
 
@@ -969,7 +973,7 @@ class FixPilotState(TypedDict):
 | planning_node | Planner | 生成计划 |
 | approval_node | Coordinator | 等待人工审批 |
 | edit_code_node | Coder | 修改代码 |
-| run_tests_node | Tester | 运行测试 |
+| run_tests_node | Tester | 运行测试 / lint / typecheck |
 | diagnose_failure_node | Failure Diagnosis | 分析失败 |
 | retry_decision_node | Coordinator | 判断是否重试 |
 | review_diff_node | Reviewer | 审查 diff |
@@ -985,16 +989,16 @@ class FixPilotState(TypedDict):
 | clone_repo_node | ✅ |
 | analyze_repo_node | ✅ |
 | classify_issue_node | ✅ |
-| retrieve_context_node | ✅ |
+| retrieve_context_node | ✅（semantic + keyword + BM25/RRF hybrid；`test_hybrid_bm25_rrf.py`） |
 | planning_node | ✅ |
-| approval_node | 🔄（interrupt + approve/reject API） |
-| edit_code_node | ⏳ |
-| run_tests_node | ⏳ |
-| diagnose_failure_node | ⏳ |
-| retry_decision_node | ⏳ |
-| review_diff_node | ⏳ |
-| pr_writer_node | ⏳ |
-| final_report_node | 🔄（审批后阶段性报告） |
+| approval_node | ✅（interrupt + approve/reject/cancel + diff 二次审批） |
+| edit_code_node | ✅（`coder.py` + edit_history；`test_coder_e2e.py`） |
+| run_tests_node | ✅（test+lint+typecheck + test_runs；`test_docker_runner.py`） |
+| diagnose_failure_node | ✅（`failure_diagnoser.py`） |
+| retry_decision_node | ✅（max_retries + edit/test 重跑） |
+| review_diff_node | ✅（`reviewer.py` + 高风险标记） |
+| pr_writer_node | ✅（`pr_writer.py` + pr_draft） |
+| final_report_node | ✅（全流程最终报告；`test_coder_e2e.py`） |
 
 ### 8.3 Edge 设计
 
@@ -1058,6 +1062,7 @@ final_report_node
 | create_branch_tool | high | 创建 branch |
 | commit_tool | high | commit |
 | create_pr_tool | high | 创建 PR |
+| rollback_retry_tool | high | 回滚 workspace 文件到指定 retry step |
 
 ### 9.2 工具权限策略
 
@@ -1076,6 +1081,8 @@ final_report_node
 5. PR 创建。
 6. 依赖安装。
 7. 修改 CI / 配置。
+
+**实现状态**：✅ 已完成（`backend/app/core/tool_permissions.py` + `workflow_runner.NODE_TOOL_MAP`；测试: `test_tool_permissions.py` + `test_workflow_completion.py`）
 
 ---
 
@@ -1253,6 +1260,13 @@ POST /api/auth/logout
 GET  /api/auth/me
 ```
 
+### 12.1.1 Settings API
+
+```http
+GET /api/settings
+PUT /api/settings
+```
+
 ### 12.2 Task API
 
 ```http
@@ -1268,8 +1282,11 @@ DELETE /api/fix-tasks/{task_id}
 POST /api/fix-tasks/{task_id}/start
 POST /api/fix-tasks/{task_id}/approve
 POST /api/fix-tasks/{task_id}/reject
+POST /api/fix-tasks/{task_id}/approve-diff
+POST /api/fix-tasks/{task_id}/reject-diff
 POST /api/fix-tasks/{task_id}/cancel
 POST /api/fix-tasks/{task_id}/retry
+POST /api/fix-tasks/{task_id}/rollback-retry
 ```
 
 ### 12.4 Result API
@@ -1337,6 +1354,18 @@ POST /api/github/create-pr
 8. error message。
 9. 关联文件。
 
+**实现状态**：✅ 已完成（`StepDetailPanel` + `TraceReplayControls` + `GET /steps` 计算字段；测试: `test_trace_metrics.py` + `npm run build`）
+
+### 13.3 设置页
+
+展示与编辑：
+
+1. GitHub Personal Access Token（掩码显示，可清除）。
+2. 用户偏好模型名称与 LLM Base URL（未设置时使用服务器 `.env` 默认）。
+3. 需登录后访问 `/settings`。
+
+**实现状态**：✅ 已完成（`GET/PUT /api/settings` + `user_settings` 表；测试: `test_settings.py` + `npm run build`）
+
 ---
 
 ## 14. RAG 架构说明
@@ -1347,8 +1376,9 @@ POST /api/github/create-pr
 Issue 文本
   ↓ Retrieve（Code Retriever）
     ├── keyword 搜索
+    ├── BM25 稀疏检索
     ├── LlamaIndex 语义检索
-    └── hybrid 合并
+    └── hybrid：RRF 融合 semantic / keyword / BM25
   ↓ Augment（Planner 拼进 Prompt）
   ↓ Generate（Planner / Coder 调用 LLM）
 ```
@@ -1361,19 +1391,21 @@ Issue 文本
 | 组件 | 实现 | 状态 |
 |---|---|---|
 | Embedding | text-embedding-3-small | ✅ |
-| 切分 | 50 行/chunk（V2 目标： additionally 按函数/类切分） | ✅ / ⏳ |
+| 切分 | Python AST 按顶层函数/类切分，装饰器归入函数、类方法归入类；chunk 保留 `file_path/language/symbol_name/line_start/line_end`；长片段继续按 50 行兜底 | ✅（`test_semantic_chunking.py`） |
 | 索引缓存 | `.llamaindex_cache/` | ✅ |
-| 检索模式 | semantic / keyword / hybrid | ✅ |
-| Query Rewrite | — | ⏳ |
-| LLM Rerank | — | ⏳ |
-| 检索结果写入 DB | retrieved_contexts 表 | ⏳ |
+| 检索模式 | semantic / keyword / hybrid | ✅（hybrid = semantic + keyword + BM25，经 RRF 融合） |
+| Query Rewrite | 规则提取摘要、代码符号、错误类型、文件路径和关键词 | ✅（`test_query_rewrite.py`） |
+| BM25 稀疏检索 | 本地 token 化代码和 issue，不依赖 Embedding API，用来补足精确符号和错误名线索；hybrid 中与 keyword 共用一次文件扫描 | ✅（`test_hybrid_bm25_rrf.py`） |
+| RRF 融合排序 | 对 semantic / keyword / BM25 的名次做融合，避免直接混用不同算法的原始分数；2026-06-14 已补文件读取次数回归测试 | ✅（`test_hybrid_bm25_rrf.py`） |
+| LLM Rerank | 对 semantic / hybrid 检索候选使用 LLM 二次排序，失败时保留原排序 | ✅（`test_rerank.py`） |
+| 检索结果写入 DB | `retrieved_contexts` 表 + `GET /api/fix-tasks/{id}/retrieved-contexts` | ✅（`test_workflow_completion.py`） |
 
 ### 14.3 上下文管理（任务级 State，非对话记忆）
 
 | 层级 | 内容 | 持久化 | 状态 |
 |---|---|---|---|
-| FixPilotState | 各 Agent 输出汇总 | LangGraph checkpoint | 🔄（MemorySaver + `graph/state.py`） |
-| PostgreSQL | agent_steps、retrieved_contexts 等 | 8 张表 | 🔄（Workflow 启动时写入 steps/contexts） |
+| FixPilotState | 各 Agent 输出汇总 | LangGraph checkpoint + PostgreSQL `workflow_checkpoints` | ✅（MemorySaver 负责进程内状态；`workflow_checkpoints` 负责重启后恢复，测试: `test_workflow_checkpoint.py`） |
+| PostgreSQL | agent_steps、retrieved_contexts 等 | 8 张表 | ✅（Workflow 写入 steps/contexts/edit_history/test_runs/tool_calls/approvals） |
 | Prompt 截断 | Planner 限制 snippet 行数 | 单次调用 | ✅ |
 
 ---
@@ -1511,16 +1543,16 @@ Issue 文本
 
 ### Phase 开发顺序（与 Milestone 对照）
 
-> **当前重点：Phase 2 — LangGraph Workflow + 上下文持久化 + 审批 API**
+> **当前重点：需求清单已完成，进入演示打磨与工程优化**
 
 | Phase | 内容 | 状态 |
 |---|---|---|
 | Phase 1 | 单 Agent 能力（Issue/Retriever/Planner + Tools + DB） | ✅ 已完成 |
-| Phase 2 | LangGraph 线性 Workflow + State + DB 写入 + 审批 API | ⏳ **当前重点** |
-| Phase 3 | Coder + Tester + edit_history / test_runs | ⏳ 待做 |
-| Phase 4 | Failure Diagnosis + Reviewer + PR Writer + retry 分支 | ⏳ 待做 |
-| Phase 5 | 前端 + Agent Trace UI | ⏳ 待做 |
-| Phase 6 | GitHub 集成 + Celery + 评测 | ⏳ 待做 |
+| Phase 2 | LangGraph Workflow + State + DB 写入 + 审批 API | ✅ 已完成（审批前支持 Issue Analyst + Code Retriever 并行；`test_workflow_parallel.py`） |
+| Phase 3 | Coder + Tester + edit_history / test_runs | ✅ 已完成 |
+| Phase 4 | Failure Diagnosis + Reviewer + PR Writer + retry 分支 | ✅ 已完成（FR-701~702、801~802、901；`test_coder_e2e.py` 串联验证） |
+| Phase 5 | 前端 + Agent Trace UI | ✅ 已完成（FR-001/004 + Trace + 设置页 + 任务回放；`npm run build`） |
+| Phase 6 | GitHub 集成 + Celery + 评测 | ✅ 已完成（FR-903 + Issue 读取 + Celery + LLM Judge；`test_celery_workflow.py` + `test_github_issue.py` + `test_evaluation.py`） |
 
 ## 18. 里程碑
 
@@ -1528,7 +1560,7 @@ Issue 文本
 
 交付：
 
-1. 用户登录。
+1. 用户登录。✅ 2026-06-10（FR-001，`test_auth.py`）；✅ 2026-06-12（GitHub OAuth，`test_github_oauth.py`）
 2. 创建任务。
 3. clone public repo。
 4. 任务列表和详情。
@@ -1538,59 +1570,60 @@ Issue 文本
 
 交付：
 
-1. State schema。✅ 2026-06-08（`graph/state.py`）
-2. Coordinator Agent。🔄 2026-06-08（intake/approval/final_report Node）
-3. Repository Analyst Agent。🔄 2026-06-08（clone/analyze Node，Tool 封装）
+1. State schema。✅ 2026-06-08（`graph/state.py`）；✅ 2026-06-12（`workflow_checkpoints` DB checkpoint，`test_workflow_checkpoint.py`）
+2. Coordinator Agent。✅ 2026-06-10（intake/approval/final_report Node）
+3. Repository Analyst Agent。✅ 2026-06-12（`repository_analyst.py` 封装 clone/analyze Tool；测试: `test_repository_analyst.py`）；✅ 2026-06-12（Python/TypeScript/Go/Java 样例仓库 E2E，`test_multilanguage_e2e.py`）
 4. Issue Analyst Agent。✅ 2026-06-08（classify_issue_node）
-5. 基础 workflow routing。🔄 2026-06-08（线性至审批，分支节点待做）
-6. Agent step 日志。🔄 2026-06-08（`GET /steps` + agent_steps 写入）
+5. 基础 workflow routing。✅ 2026-06-10（全流程 + 重试 + diff 审批；`test_coder_e2e.py`）；✅ 2026-06-12（审批前多 Agent 并行，`test_workflow_parallel.py` + `test_workflow_completion.py`）
+6. Agent step 日志。✅ 2026-06-10（`GET /steps` + agent_steps 写入 + tool_calls）
 
 ### Milestone 3：代码检索和规划
 
 交付：
 
-1. keyword search。
+1. keyword search。✅ 2026-06-13（FR-303，hybrid 增加 BM25 + RRF；`test_hybrid_bm25_rrf.py`）；✅ 2026-06-14（FR-303，keyword/BM25 共用一次本地文件扫描；`test_hybrid_bm25_rrf.py`）
 2. 文件读取工具。
 3. LlamaIndex 语义检索。
 4. Planner Agent。
-5. 人工审批。
+5. 人工审批。✅ 2026-06-10（approve/reject/cancel/approve-diff/reject-diff）；✅ 2026-06-12（FR-402，补充要求重新规划）
 
 ### Milestone 4：代码修改和测试
 
 交付：
 
-1. Coder Agent。
-2. apply patch。
-3. git diff。
-4. Docker 测试。
-5. 测试日志保存。
+1. Coder Agent。✅ 2026-06-10（FR-501/502，`test_coder_e2e.py`）；✅ 2026-06-12（FR-503，`test_coder_test_generation.py`）
+2. apply patch。✅ 2026-06-10（`edit_file_tool.py`）
+3. git diff。✅ 2026-06-10（edit_history + combined_diff API）
+4. Docker 测试。✅ 2026-06-10（FR-601，`test_docker_runner.py`）
+5. 测试日志保存。✅ 2026-06-10（FR-604，`test_runs` 表）
 
 ### Milestone 5：失败自修复和审查
 
 交付：
 
-1. Failure Diagnosis Agent。
-2. retry loop。
-3. Reviewer Agent。
-4. 回滚机制。
-5. 风险分级。
+1. Failure Diagnosis Agent。✅ 2026-06-10（FR-701）
+2. retry loop。✅ 2026-06-10（FR-702）
+3. Reviewer Agent。✅ 2026-06-10（FR-801/802）
+4. 回滚机制。✅ 2026-06-12（Coder 写入失败回滚 + `POST /rollback-retry` 按 retry step 恢复 workspace；`test_workflow_completion.py`）
+5. 风险分级。✅ 2026-06-10（FR-802）
 
 ### Milestone 6：PR 文案和 GitHub 集成
 
 交付：
 
-1. PR Writer Agent。
-2. patch 下载。
-3. PR 描述生成。
-4. GitHub issue 读取。
-5. V1 创建 PR。
+1. PR Writer Agent。✅ 2026-06-10（FR-901）；✅ 2026-06-11（FR-902）
+2. patch 下载。✅ 2026-06-10（`GET /patch` + 前端「下载 Patch」；`test_github_pr.py`）
+3. PR 描述生成。✅ 2026-06-10（`pr_draft` / final_report）
+4. GitHub issue 读取。✅ 2026-06-10（`GET /api/github/issues`，`test_github_issue.py`）
+5. V1 创建 PR。✅ 2026-06-10（FR-903，`test_github_pr.py`）
+6. GitHub Actions 结果读取。✅ 2026-06-12（`GET /api/github/actions/runs`，`test_github_actions.py`）
 
 ### Milestone 7：可观测性和部署
 
 交付：
 
-1. Agent Trace UI。
-2. 工具调用审计。
+1. Agent Trace UI。✅ 2026-06-10（latency / token / 关联文件 / tool_calls / 任务回放）
+2. 工具调用审计。✅ 2026-06-10（tool_calls 表 + 前端展示）；✅ 2026-06-12（细粒度权限策略，`test_tool_permissions.py`）
 3. 指标面板。
 4. Docker Compose。
 5. README 和演示视频。
@@ -1603,19 +1636,22 @@ V2 完成标准（全部达成即 V2 验收通过）：
 
 1. 用户可以创建修复任务。
 2. 系统可以 clone public GitHub repo。
-3. Repository Analyst 可以分析项目结构。
+3. Repository Analyst 可以分析项目结构。✅ 2026-06-12（Python/TypeScript/Go/Java 样例仓库 E2E，`test_multilanguage_e2e.py`）
 4. Issue Analyst 可以输出结构化 issue 分析。
-5. Code Retriever 可以检索相关代码。
+5. Code Retriever 可以检索相关代码。✅ 2026-06-13（FR-303，BM25 + RRF hybrid；`test_hybrid_bm25_rrf.py`）；✅ 2026-06-14（FR-303，hybrid 本地扫描复用优化；`test_hybrid_bm25_rrf.py`）
 6. Planner 可以生成修改计划。✅ 2026-06-08
-7. 用户可以审批或拒绝计划。🔄 2026-06-08（API ✅，前端待做）
-8. Coder 可以根据计划修改代码。
-9. Tester 可以在 Docker 中运行测试。
-10. Failure Diagnosis 可以分析失败日志。
-11. 系统最多自动重试 2 次。
-12. Reviewer 可以审查 diff。
-13. PR Writer 可以生成 PR 文案。
-14. 前端可以展示完整 Agent 时间线。
-15. 项目可以通过 Docker Compose 本地运行。
+7. 用户可以审批或拒绝计划。✅ 2026-06-10（`/approve` `/reject` `/cancel` + 前端）；✅ 2026-06-12（FR-402，补充要求写入 state 并重新规划）
+8. Coder 可以根据计划修改代码。✅ 2026-06-10（`test_coder_e2e.py` 全链路）；✅ 2026-06-12（FR-503，bug fix 优先补测试）
+9. Tester 可以在 Docker 中运行测试。✅ 2026-06-10（`test_docker_runner.py`）
+10. Failure Diagnosis 可以分析失败日志。✅ 2026-06-10（`test_failure_diagnoser.py`）
+11. 系统最多自动重试 2 次。✅ 2026-06-10（FR-702）
+12. Reviewer 可以审查 diff。✅ 2026-06-10（`test_reviewer.py`）
+13. PR Writer 可以生成 PR 文案。✅ 2026-06-10（FR-901）
+14. 前端可以展示完整 Agent 时间线。✅ 2026-06-10（Trace + tool_calls + 任务回放）
+15. 用户可在审批后创建 GitHub PR（不自动 merge）。✅ 2026-06-10（FR-903，`test_github_pr.py`）
+16. Workflow 可通过 Celery 在后台执行。✅ 2026-06-10（`test_celery_workflow.py`）
+17. 系统支持 LLM-as-Judge 任务评测。✅ 2026-06-10（`test_evaluation.py`）
+18. 项目可以通过 Docker Compose 本地运行。
 
 ---
 
@@ -1642,11 +1678,11 @@ V2 完成标准（全部达成即 V2 验收通过）：
 
 ```text
 FixPilot｜基于 LangGraph 的多 Agent Coding 系统
-技术栈：Python、FastAPI、LangGraph、LangChain Tools、LlamaIndex、Docker、GitPython、GitHub API、PostgreSQL、Redis、Next.js
+技术栈：Python、FastAPI、LangGraph、LangChain Tools、LlamaIndex、rank-bm25、Docker、GitPython、GitHub API、PostgreSQL、Redis、Next.js
 
 - 基于 LangGraph 设计多 Agent Coding Workflow，将 GitHub Issue 修复流程拆分为需求分析、仓库解析、代码检索、修改计划、代码编辑、测试执行、失败诊断、代码审查和 PR 文案生成等协作节点。
 - 设计 Coordinator、Issue Analyst、Repository Analyst、Code Retriever、Planner、Coder、Tester、Reviewer、PR Writer 等 Agent 角色，实现任务路由、状态共享、失败分支处理和有限重试机制。
-- 使用 LlamaIndex 构建代码语义检索模块，结合关键词搜索和向量检索定位相关文件，为 Planner Agent 提供候选代码上下文。
+- 使用 LlamaIndex 构建代码语义检索模块，结合关键词搜索、BM25 稀疏检索、RRF 融合排序和向量检索定位相关文件，为 Planner Agent 提供候选代码上下文。
 - 封装文件读取、代码搜索、代码编辑、git diff、Docker 测试执行和 GitHub PR 生成等工具，使不同 Agent 具备受控的外部执行能力。
 - 引入 Docker 沙箱、工具权限分级、用户审批和审计日志机制，对 shell 执行、文件修改、PR 创建等高风险操作进行限制和追踪。
 - 构建 Agent Trace 面板，记录用户请求、Agent 输出、工具调用、审批记录、测试日志和最终结果，提升多 Agent 系统的可观测性和可调试性。
@@ -1663,7 +1699,6 @@ FixPilot｜基于 LangGraph 的多 Agent Coding 系统
 | 代码检索不准 | patch 错误 | keyword + semantic hybrid retrieval |
 | LLM 生成无效 diff | patch 失败 | diff 校验 + 回滚 |
 | 重试越修越错 | 质量下降 | max_retries 限制 + Reviewer 审查 |
-| 私有 repo 权限复杂 | 集成困难 | V2 先 public repo，V3+ 私有 |
 | 高风险修改误执行 | 安全风险 | human-in-the-loop + audit log |
 | 上下文过长 | 成本高 | 文件摘要 + 代码片段检索 |
 
@@ -1673,15 +1708,14 @@ FixPilot｜基于 LangGraph 的多 Agent Coding 系统
 
 ## 23. V3+ 扩展方向
 
-1. 支持私有 repo。
-2. 支持自动创建 PR。
-3. 支持 GitHub Actions 结果读取。
-4. 支持多 Agent 并行执行。
-5. 支持 Code Review Agent 独立运行。
-6. 支持依赖升级 Agent。
-7. 支持安全漏洞修复 Agent。
-8. 支持浏览器自动化。
-9. 扩展成 DevClaw：开发者版多 Agent 自动化助手。
+1. 支持自动创建 PR。✅ 2026-06-12（FR-903；测试: `test_github_pr.py` + `test_github_pr_tool.py`）
+2. 支持 GitHub Actions 结果读取。✅ 2026-06-12（`github_actions_tool.py` + `GET /api/github/actions/runs`；测试: `test_github_actions.py`）
+3. 支持多 Agent 并行执行。✅ 2026-06-12（`workflow_runner._run_parallel_nodes`；测试: `test_workflow_parallel.py` + `test_workflow_completion.py`）
+4. 支持 Code Review Agent 独立运行。✅ 2026-06-12（`reviewer.py`；测试: `test_reviewer.py`）
+5. 支持依赖升级 Agent。✅ 2026-06-12（`dependency_upgrade.py` 扫描 requirements/package.json/go.mod/pom.xml 并输出升级建议；测试: `test_dependency_upgrade_agent.py`）
+6. 支持安全漏洞修复 Agent。✅ 2026-06-12（`security_vulnerability.py` 扫描高风险代码模式并输出修复建议；测试: `test_security_vulnerability_agent.py`）
+7. 支持浏览器自动化。✅ 2026-06-12（`browser_automation_tool.py` 提供 localhost 白名单 + 动作白名单安全入口；测试: `test_browser_automation_tool.py`）
+8. 扩展成 DevClaw：开发者版多 Agent 自动化助手。✅ 2026-06-12（`devclaw_profile.py` 输出产品化能力画像与安全边界；测试: `test_devclaw_profile.py`）
 
 ---
 
@@ -1692,15 +1726,21 @@ backend/app/
 ├── agents/
 │   ├── issue_analyst.py      ✅ FR-201~202
 │   ├── code_retriever.py     ✅ FR-301~303
-│   └── planner.py            ✅ FR-401
+│   ├── planner.py            ✅ FR-401
+│   ├── dependency_upgrade.py ✅ V3 依赖升级建议 Agent
+│   ├── security_vulnerability.py ✅ V3 安全漏洞修复建议 Agent
+│   └── devclaw_profile.py    ✅ V3 DevClaw 产品化能力画像
 ├── tools/
 │   ├── workspace.py          ✅ FR-101
 │   ├── repo_clone_tool.py    ✅ FR-101
 │   ├── repo_analysis_tool.py ✅ FR-102~103
-│   └── semantic_search_tool.py ✅ FR-302
-├── models/                   ✅ 8 张表（业务写入 ⏳）
+│   ├── semantic_search_tool.py ✅ FR-302
+│   ├── github_actions_tool.py ✅ V3 GitHub Actions 结果读取
+│   └── browser_automation_tool.py ✅ V3 浏览器自动化安全入口
+├── models/                   ✅ 12 张表（含 `workflow_checkpoints`，主要业务产物已写入 DB）
 ├── schemas/                  ✅ 各 Agent 输入输出
 ├── api/routes/               ✅ 部分 API
+├── services/workflow_runner.py ✅ Workflow 编排 + 审批前多 Agent 并行执行
 └── core/config.py            ✅
 ```
 
@@ -1713,4 +1753,4 @@ backend/app/
 | MCP 协议 | LangChain Tools 已够用 |
 | 多轮对话三级记忆 | FixPilot 是任务流，不是客服 |
 | Monitor 动态调权重 | 需要线上数据，V3+ |
-| 浏览器自动化 | 安全风险高，V3+ |
+| 任意外网浏览器自动化 | 安全风险高；当前仅支持 localhost 白名单 + 动作白名单的受控入口 |
