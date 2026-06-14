@@ -40,7 +40,8 @@ async def search_code(payload: CodeRetrievalRequest) -> CodeRetrievalResult:
     - 不需要 Embedding API，适合调试场景
 
     **混合检索（search_method="hybrid"）：**
-    - 同时运行语义检索和关键词检索，结果合并去重
+    - 同时运行语义检索、关键词检索和 BM25 稀疏检索
+    - 使用 RRF 融合排序，避免不同算法的原始分数直接混用
     - 精度最高，适合复杂 issue
 
     **前提条件：**

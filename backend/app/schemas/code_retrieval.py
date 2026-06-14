@@ -29,9 +29,9 @@ class RetrievedFile(BaseModel):
         default=0.0,
         description="相关度评分，语义检索时为余弦相似度（0~1），关键词检索时为自定义评分",
     )
-    method: Literal["keyword", "semantic", "hybrid"] = Field(
+    method: Literal["keyword", "semantic", "hybrid", "pgvector"] = Field(
         default="semantic",
-        description="检索方式：keyword（关键词）/ semantic（语义）/ hybrid（混合）",
+        description="检索方式：keyword（关键词）/ semantic（语义）/ hybrid（混合）/ pgvector（持久化向量）",
     )
 
 
@@ -69,9 +69,14 @@ class CodeRetrievalRequest(BaseModel):
     )
 
     # ── 检索策略 ──
-    search_method: Literal["keyword", "semantic", "hybrid"] = Field(
+    repo_url: Optional[str] = Field(
+        default=None,
+        description="仓库 URL；pgvector 持久化检索用它定位同一个仓库的 embedding",
+    )
+
+    search_method: Literal["keyword", "semantic", "hybrid", "pgvector"] = Field(
         default="semantic",
-        description="检索策略：semantic（默认）/ keyword / hybrid（两者合并）",
+        description="检索策略：semantic（默认）/ keyword / hybrid / pgvector",
     )
 
     # ── 结果控制 ──
@@ -86,6 +91,10 @@ class CodeRetrievalRequest(BaseModel):
         ge=5,
         le=200,
         description="每个片段最多返回多少行代码（仅关键词检索时生效），默认 50",
+    )
+    enable_rerank: bool = Field(
+        default=True,
+        description="是否启用 LLM Rerank；仅 semantic / hybrid 检索会尝试使用",
     )
 
 
@@ -107,6 +116,22 @@ class CodeRetrievalResult(BaseModel):
     keywords_used: List[str] = Field(
         default=[],
         description="实际使用的关键词列表（关键词检索时有值）",
+    )
+    query_text_used: Optional[str] = Field(
+        default=None,
+        description="实际用于语义检索的查询文本；启用 Query Rewrite 时是改写后的 query",
+    )
+    query_rewritten: bool = Field(
+        default=False,
+        description="本次检索是否对 query_text 做过改写",
+    )
+    reranked: bool = Field(
+        default=False,
+        description="本次结果是否经过 LLM Rerank 重新排序",
+    )
+    rerank_method: Optional[str] = Field(
+        default=None,
+        description="排序增强方法说明，如 rrf / llm；未执行时为 null",
     )
     search_method: str = Field(
         default="semantic",

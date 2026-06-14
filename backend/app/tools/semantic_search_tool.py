@@ -3,7 +3,8 @@
 # 作用：用 LlamaIndex 对代码仓库建立向量索引，并提供语义检索能力。
 #
 # 语义检索的核心思路：
-# - 把代码文件按固定行数切分成 chunk（每块约 50 行）
+# - Python 文件优先按 AST 里的函数/类范围切分，其他文件按轻量规则切分
+# - 每个 chunk 默认最多约 50 行，避免单块内容太大
 # - 用 OpenAI text-embedding-3-small 把每个 chunk 向量化
 # - 把所有向量存到 VectorStoreIndex（内存 + 磁盘缓存）
 # - 查询时把 issue_text 向量化，找余弦相似度最高的 top-k chunk
@@ -20,6 +21,8 @@
 
 import logging
 import os
+import re
+import ast
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional
 
@@ -55,6 +58,63 @@ MAX_FILE_SIZE_BYTES = 512 * 1024  # 512 KB，超过则跳过
 # 每个 chunk 的行数
 # 50 行约等于一个中等函数的长度，既不太碎也不太大
 CHUNK_LINES = 50
+
+LANGUAGE_BY_EXTENSION: dict[str, str] = {
+    ".py": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".go": "go",
+    ".java": "java",
+    ".rs": "rust",
+    ".rb": "ruby",
+    ".php": "php",
+    ".c": "c",
+    ".cpp": "cpp",
+    ".h": "c",
+    ".hpp": "cpp",
+    ".cs": "csharp",
+    ".swift": "swift",
+    ".kt": "kotlin",
+}
+
+DEFINITION_PATTERNS: dict[str, tuple[str, ...]] = {
+    ".py": (r"^\s*(async\s+def|def|class)\s+[A-Za-z_]\w*",),
+    ".js": (
+        r"^\s*(export\s+)?(async\s+)?function\s+[A-Za-z_$][\w$]*",
+        r"^\s*(export\s+)?class\s+[A-Za-z_$][\w$]*",
+        r"^\s*(export\s+)?const\s+[A-Za-z_$][\w$]*\s*=\s*(async\s*)?\(",
+    ),
+    ".jsx": (
+        r"^\s*(export\s+)?(async\s+)?function\s+[A-Za-z_$][\w$]*",
+        r"^\s*(export\s+)?class\s+[A-Za-z_$][\w$]*",
+        r"^\s*(export\s+)?const\s+[A-Za-z_$][\w$]*\s*=\s*(async\s*)?\(",
+    ),
+    ".ts": (
+        r"^\s*(export\s+)?(async\s+)?function\s+[A-Za-z_$][\w$]*",
+        r"^\s*(export\s+)?class\s+[A-Za-z_$][\w$]*",
+        r"^\s*(export\s+)?const\s+[A-Za-z_$][\w$]*\s*=\s*(async\s*)?\(",
+    ),
+    ".tsx": (
+        r"^\s*(export\s+)?(async\s+)?function\s+[A-Za-z_$][\w$]*",
+        r"^\s*(export\s+)?class\s+[A-Za-z_$][\w$]*",
+        r"^\s*(export\s+)?const\s+[A-Za-z_$][\w$]*\s*=\s*(async\s*)?\(",
+    ),
+    ".go": (r"^\s*func\s+",),
+    ".java": (
+        r"^\s*(public|private|protected|abstract|final|static|\s)*\s*(class|interface|enum)\s+[A-Za-z_]\w*",
+        r"^\s*(public|private|protected|static|final|synchronized|\s)+[\w<>\[\]]+\s+[A-Za-z_]\w*\s*\(",
+    ),
+    ".rs": (r"^\s*(pub\s+)?(fn|struct|enum|impl|trait)\s+",),
+}
+
+SYMBOL_PATTERNS: tuple[str, ...] = (
+    r"\b(?:async\s+def|def|class)\s+([A-Za-z_]\w*)",
+    r"\b(?:function|class|interface|enum|struct|trait|fn)\s+([A-Za-z_$][\w$]*)",
+    r"\bfunc\s+(?:\([^)]+\)\s*)?([A-Za-z_]\w*)",
+    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=",
+)
 
 
 # ── 内部工具函数 ──────────────────────────────────────────────────────────────
@@ -98,11 +158,12 @@ def _split_file_into_chunks(
     chunk_lines: int = CHUNK_LINES,
 ) -> List[dict]:
     """
-    把一个代码文件按行数切分成若干 chunk。
+    把一个代码文件切分成若干 chunk。
 
     为什么要切分而不是整个文件作为一个 Document？
     - 整个文件可能几百行，向量化后信息太分散，检索精度差
-    - 切成 50 行的块，每块更聚焦，检索到相关函数/方法的概率更高
+    - Python 优先用 AST 保留完整函数/类，减少把代码结构切碎的情况
+    - 长函数/长类仍按 50 行拆开，避免单个 chunk 太大
     - 保留精确的行号，方便 Planner Agent 知道要修改哪里
 
     参数:
@@ -129,15 +190,109 @@ def _split_file_into_chunks(
     except ValueError:
         relative_path = str(file_path)
 
-    chunks = []
-    for i in range(0, len(lines), chunk_lines):
-        chunk_line_list = lines[i : i + chunk_lines]
-        chunks.append({
+    extension = file_path.suffix.lower()
+    language = LANGUAGE_BY_EXTENSION.get(extension, extension.lstrip(".") or "text")
+
+    def extract_symbol_name(line: str) -> str:
+        for pattern in SYMBOL_PATTERNS:
+            match = re.search(pattern, line)
+            if match:
+                return match.group(1)
+        return ""
+
+    def make_chunk(start: int, end: int, symbol_name: str = "") -> dict:
+        chunk_line_list = lines[start:end]
+        return {
             "file_path": relative_path,
-            "line_start": i + 1,           # 转成 1-based 行号
-            "line_end": i + len(chunk_line_list),
+            "language": language,
+            "symbol_name": symbol_name,
+            "line_start": start + 1,       # 转成 1-based 行号
+            "line_end": end,
             "content": "\n".join(chunk_line_list),
-        })
+        }
+
+    def split_range(start: int, end: int, symbol_name: str = "") -> list[dict]:
+        chunks: list[dict] = []
+        for i in range(start, end, chunk_lines):
+            chunk_end = min(i + chunk_lines, end)
+            # 只包含空行的片段没有检索价值，跳过可以避免生成无意义 embedding。
+            if not any(line.strip() for line in lines[i:chunk_end]):
+                continue
+            chunks.append(make_chunk(i, chunk_end, symbol_name))
+        return chunks
+
+    def split_python_with_ast() -> list[dict] | None:
+        """
+        用 Python AST 找顶层函数/类的完整范围。
+
+        这里只处理顶层 FunctionDef / AsyncFunctionDef / ClassDef：
+        - 类里面的方法属于这个类的 chunk，不再被单独切出来
+        - 装饰器也算进函数/类范围，避免丢掉 @router.get 这类关键信息
+        - 可解析但没有函数/类时，仍按行兜底
+        - 如果解析失败，就返回 None，让外层回退到原来的轻量规则
+        """
+        try:
+            tree = ast.parse(content)
+        except SyntaxError:
+            return None
+
+        definition_ranges: list[tuple[int, int, str]] = []
+        for node in tree.body:
+            if not isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                continue
+
+            end_lineno = getattr(node, "end_lineno", None)
+            if end_lineno is None:
+                return None
+
+            decorator_lines = [
+                decorator.lineno
+                for decorator in getattr(node, "decorator_list", [])
+            ]
+            start_lineno = min([node.lineno, *decorator_lines])
+            definition_ranges.append((start_lineno - 1, end_lineno, node.name))
+
+        if not definition_ranges:
+            return split_range(0, len(lines))
+
+        chunks: list[dict] = []
+        cursor = 0
+        for start, end, symbol_name in sorted(definition_ranges):
+            if cursor < start:
+                chunks.extend(split_range(cursor, start))
+
+            chunks.extend(split_range(start, end, symbol_name))
+            cursor = max(cursor, end)
+
+        if cursor < len(lines):
+            chunks.extend(split_range(cursor, len(lines)))
+
+        return chunks
+
+    if extension == ".py":
+        ast_chunks = split_python_with_ast()
+        if ast_chunks is not None:
+            return ast_chunks
+
+    patterns = DEFINITION_PATTERNS.get(extension, ())
+    definition_starts = [
+        index
+        for index, line in enumerate(lines)
+        if any(re.search(pattern, line) for pattern in patterns)
+    ]
+
+    if not definition_starts:
+        return split_range(0, len(lines))
+
+    starts = sorted({0, *definition_starts})
+    chunks: list[dict] = []
+    for position, start in enumerate(starts):
+        end = starts[position + 1] if position + 1 < len(starts) else len(lines)
+        if start >= end:
+            continue
+        chunks.extend(split_range(start, end, extract_symbol_name(lines[start])))
 
     return chunks
 
@@ -228,11 +383,17 @@ def build_code_index(
                 text=chunk["content"],
                 metadata={
                     "file_path": chunk["file_path"],
+                    "language": chunk["language"],
+                    "symbol_name": chunk["symbol_name"],
                     "line_start": chunk["line_start"],
                     "line_end": chunk["line_end"],
                 },
                 excluded_embed_metadata_keys=[
-                    "line_start", "line_end", "file_path"
+                    "line_start",
+                    "line_end",
+                    "file_path",
+                    "language",
+                    "symbol_name",
                 ],
                 excluded_llm_metadata_keys=["line_start", "line_end"],
             )
@@ -281,6 +442,8 @@ def semantic_search(
         [
             {
                 "file_path": "src/utils/validator.py",
+                "language": "python",
+                "symbol_name": "validate_input",
                 "line_start": 10,
                 "line_end": 60,
                 "snippet": "def validate_input(...)...",
@@ -300,6 +463,8 @@ def semantic_search(
         metadata = node.node.metadata
         results.append({
             "file_path": metadata.get("file_path", "unknown"),
+            "language": metadata.get("language", ""),
+            "symbol_name": metadata.get("symbol_name", ""),
             "line_start": metadata.get("line_start", 1),
             "line_end": metadata.get("line_end", 1),
             "snippet": node.node.get_content(),
