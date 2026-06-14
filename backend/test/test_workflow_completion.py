@@ -609,7 +609,10 @@ async def _api_tests():
             "app.api.routes.workflow.workflow_runner.retry_failed_workflow",
             new_callable=AsyncMock,
             return_value=failed_task,
-        ) as mock_retry:
+        ) as mock_retry, patch(
+            "app.api.routes.workflow.workflow_queue.celery_enabled",
+            return_value=False,
+        ):
             r = await client.post(
                 f"/api/fix-tasks/{failed_task_id}/retry",
                 json={"comment": "api retry"},
