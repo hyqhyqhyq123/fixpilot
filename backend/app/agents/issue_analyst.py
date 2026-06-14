@@ -17,8 +17,9 @@ import json
 import logging
 import re
 
-from langchain_openai import ChatOpenAI
+from app.core.llm_trace import record_token_usage
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
 
 from app.core.config import get_settings
 from app.schemas.issue_analysis import IssueAnalysisResult, IssueAnalysisRequest
@@ -266,6 +267,7 @@ def analyze_issue(request: IssueAnalysisRequest) -> IssueAnalysisResult:
 
         # ── 第 4 步：把消息发给 LLM，等待回复 ──
         response = llm.invoke(messages)
+        record_token_usage(response)
 
         # response.content 是 LLM 返回的文本内容
         raw_content = response.content

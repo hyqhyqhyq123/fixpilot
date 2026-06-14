@@ -5,7 +5,20 @@
 #   python test_issue_analyst.py
 
 import json
+import os
 import sys
+
+if "pytest" in sys.modules:
+    import pytest
+
+    real_llm_test_enabled = os.environ.get("RUN_LLM_TESTS") == "1"
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not real_llm_test_enabled or api_key in {"", "test-openai-key"}:
+        pytest.skip(
+            "Issue Analyst 集成测试需要真实 LLM API；默认 pytest 门禁跳过，"
+            "如需手动验证请设置 RUN_LLM_TESTS=1 和真实 OPENAI_API_KEY。",
+            allow_module_level=True,
+        )
 
 from app.agents.issue_analyst import analyze_issue
 from app.schemas.issue_analysis import IssueAnalysisRequest

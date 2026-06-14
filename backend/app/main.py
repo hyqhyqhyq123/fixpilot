@@ -9,12 +9,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes import auth as auth_router
+from app.api.routes import github as github_router
+from app.api.routes import user_settings as user_settings_router
 from app.api.routes import fix_tasks as fix_tasks_router
 from app.api.routes import issue_analysis as issue_analysis_router
 from app.api.routes import code_retrieval as code_retrieval_router
 from app.api.routes import planner as planner_router
 from app.api.routes import workflow as workflow_router
 from app.core.config import get_settings
+from app.core.observability import setup_observability
 from app.db.session import init_db
 
 # 配置日志格式：每条日志都带时间、级别和来源，方便排查问题
@@ -73,11 +77,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+setup_observability(app, settings)
+
 
 # ── 健康检查接口 ──────────────────────────────────────────
 # 作用：让你快速验证服务是否正常运行
 # 访问 http://localhost:8000/health 看到 {"status": "ok"} 就说明服务跑起来了
 
+# 注册认证路由（FR-001）
+app.include_router(auth_router.router)
+app.include_router(github_router.router)
+app.include_router(user_settings_router.router)
 # 注册任务路由
 app.include_router(fix_tasks_router.router)
 # 注册 Issue 分析路由

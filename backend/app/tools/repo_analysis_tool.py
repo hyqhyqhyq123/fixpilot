@@ -211,6 +211,10 @@ class ProjectInfo(BaseModel):
     # 测试相关
     test_framework: Optional[str] = Field(default=None, description="测试框架，如 pytest、Jest")
     test_command: Optional[str] = Field(default=None, description="推荐的测试命令，如 pytest")
+    test_directories: list[str] = Field(
+        default_factory=list,
+        description="检测到的测试目录，如 tests、__tests__",
+    )
 
     # lint 相关
     lint_tool: Optional[str] = Field(default=None, description="lint 工具，如 ruff、ESLint")
@@ -357,6 +361,27 @@ def _check_rule(
     return False
 
 
+def _find_test_directories(root: Path) -> list[str]:
+    """查找常见测试目录，给 Planner 判断是否应该补测试。"""
+
+    test_dir_names = {"tests", "test", "__tests__", "spec"}
+    found: list[str] = []
+
+    for path in root.rglob("*"):
+        if len(found) >= 20:
+            break
+        if not path.is_dir() or path.name not in test_dir_names:
+            continue
+
+        relative_path = path.relative_to(root)
+        if any(part in IGNORED_DIRS for part in relative_path.parts):
+            continue
+
+        found.append(relative_path.as_posix())
+
+    return found
+
+
 # ── 核心分析函数 ─────────────────────────────────────────────
 
 def detect_project_info(repo_path: str) -> ProjectInfo:
@@ -463,7 +488,11 @@ def detect_project_info(repo_path: str) -> ProjectInfo:
             entry_file = candidate
             break
 
-    # 第 8 步：收集关键配置文件
+    # 第 8 步：查找测试目录。FR-503 要求 bug fix 优先补测试，
+    # 所以这里把“项目有没有测试目录”做成结构化信号传给 Planner。
+    test_directories = _find_test_directories(root)
+
+    # 第 9 步：收集关键配置文件
     key_config_files = [
         f for f in KEY_FILES
         if (root / f).exists()
@@ -482,6 +511,7 @@ def detect_project_info(repo_path: str) -> ProjectInfo:
         frameworks=frameworks,
         test_framework=test_framework,
         test_command=test_command,
+        test_directories=test_directories,
         lint_tool=lint_tool,
         lint_command=lint_command,
         typecheck_tool=typecheck_tool,
@@ -654,6 +684,9 @@ def get_file_tree_text(result: RepoAnalysisResult) -> str:
     if info.test_framework or info.test_command:
         fw = f"({info.test_framework})" if info.test_framework else ""
         lines.append(f"  测试框架：{fw}  |  测试命令：{info.test_command or '未检测到'}")
+
+    if info.test_directories:
+        lines.append(f"  测试目录：{', '.join(info.test_directories)}")
 
     if info.lint_tool or info.lint_command:
         lines.append(f"  lint 工具：{info.lint_tool or ''}  |  命令：{info.lint_command or '未检测到'}")

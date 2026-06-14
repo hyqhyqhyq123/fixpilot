@@ -18,6 +18,41 @@ DOCKER_CPUS = "2"
 DOCKER_TIMEOUT_SECONDS = 120
 
 
+def _ensure_docker_image(image: str, pull_timeout_seconds: int = 300) -> str | None:
+    """
+    确保测试镜像在本地存在；缺失时自动 docker pull。
+
+    返回 None 表示就绪；否则返回可读错误信息。
+    """
+    try:
+        inspect = subprocess.run(
+            ["docker", "image", "inspect", image],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if inspect.returncode == 0:
+            return None
+
+        logger.info(f"本地无镜像 {image}，开始拉取…")
+        pull = subprocess.run(
+            ["docker", "pull", image],
+            capture_output=True,
+            text=True,
+            timeout=pull_timeout_seconds,
+        )
+        if pull.returncode == 0:
+            logger.info(f"镜像拉取成功：{image}")
+            return None
+        detail = (pull.stderr or pull.stdout or "").strip()
+        return f"拉取镜像失败（{image}）：{detail}"
+
+    except subprocess.TimeoutExpired:
+        return f"拉取镜像超时（>{pull_timeout_seconds}s）：{image}"
+    except FileNotFoundError:
+        return "未找到 docker 命令，请确认 Docker Desktop 已启动并在 PATH 中"
+
+
 def _pick_docker_image(project_type: str | None) -> str:
     """根据项目类型选择基础镜像。"""
     mapping = {
@@ -44,6 +79,19 @@ def run_tests_in_docker(
     """
     repo_abs = str(Path(repo_path).resolve())
     image = _pick_docker_image(project_type)
+
+    pull_error = _ensure_docker_image(image)
+    if pull_error:
+        return TestRunResult(
+            command=command,
+            exit_code=125,
+            stdout="",
+            stderr="",
+            duration_ms=0,
+            passed=False,
+            timed_out=False,
+            error_message=pull_error,
+        )
 
     # Windows 路径需传给 Docker Desktop；使用绝对路径
     docker_cmd = [

@@ -11,6 +11,7 @@ import json
 import logging
 
 from langchain_core.prompts import ChatPromptTemplate
+from app.core.llm_trace import record_token_usage
 from langchain_openai import ChatOpenAI
 
 from app.core.config import get_settings
@@ -28,7 +29,7 @@ SYSTEM_PROMPT = """你是 FixPilot 的 Coder Agent，根据已审批的修改计
 2. 输出每个文件的**完整**修改后内容（不是 diff 片段）
 3. 保持项目现有代码风格和缩进
 4. 只做计划要求的修改，不要重构无关代码
-5. bug fix 场景尽量补充或更新测试；若无法补测试，在 test_note 说明原因
+5. 如果计划中包含测试文件，必须新增或更新该测试文件；若无法补测试，必须在 test_note 说明原因
 
 输出要求：只输出一个合法 JSON，格式：
 {{
@@ -61,6 +62,41 @@ def _parse_coder_output(raw_content: str) -> CoderOutput:
     data = json.loads(json_str)
     edits = [FileEditOperation(**item) for item in data.get("edits", [])]
     return CoderOutput(edits=edits, test_note=data.get("test_note"))
+
+
+TEST_DIR_NAMES = {"tests", "test", "__tests__", "spec"}
+
+
+def _normalize_repo_path(path: str) -> str:
+    return path.replace("\\", "/").strip("/")
+
+
+def _is_test_path(path: str) -> bool:
+    """判断路径是否像测试文件或测试目录。"""
+
+    normalized = _normalize_repo_path(path)
+    parts = normalized.split("/")
+    if any(part in TEST_DIR_NAMES for part in parts):
+        return True
+
+    filename = parts[-1] if parts else normalized
+    return bool(
+        filename.startswith("test_")
+        or filename.endswith("_test.py")
+        or ".test." in filename
+        or ".spec." in filename
+        or filename.endswith("_test.go")
+    )
+
+
+def _planned_test_paths(plan: dict) -> set[str]:
+    paths: set[str] = set()
+    for key in ("files_to_modify", "files_to_add"):
+        for item in plan.get(key) or []:
+            path = item.get("path")
+            if path and _is_test_path(path):
+                paths.add(_normalize_repo_path(path))
+    return paths
 
 
 def _build_coder_context(
@@ -107,6 +143,7 @@ def apply_approved_plan(
     plan: dict,
     allowed_files: list[str],
     retry_index: int = 0,
+    failure_analysis: dict | None = None,
 ) -> CoderApplyResult:
     """
     根据已审批计划生成并应用代码修改。
@@ -121,16 +158,33 @@ def apply_approved_plan(
     logger.info(f"Coder 开始：repo={repo_path}, allowed={len(allowed_files)} 个文件")
 
     settings = get_settings()
+    # Coder prompt 含多文件全文，生成耗时较长，需放宽超时并允许多次重试
     llm = ChatOpenAI(
         model=settings.model_name,
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
         temperature=0,
+        request_timeout=300,
+        max_retries=3,
     )
 
     context = _build_coder_context(plan, allowed_files, repo_path, issue_text)
-    user_prompt = f"""请根据以下已审批计划修改代码。
 
+    retry_section = ""
+    if failure_analysis:
+        hints = failure_analysis.get("retry_hints") or ""
+        plans = failure_analysis.get("next_fix_plan") or []
+        retry_section = f"""
+## 上次测试失败诊断（请据此修复）
+- 摘要：{failure_analysis.get('failure_summary', '')}
+- 原因：{failure_analysis.get('likely_cause', '')}
+- 建议：{'; '.join(plans)}
+- 提示：{hints}
+
+"""
+
+    user_prompt = f"""请根据以下已审批计划修改代码。
+{retry_section}
 {context}
 
 允许修改的文件（只能改这些）：{allowed_files}
@@ -145,6 +199,7 @@ def apply_approved_plan(
     try:
         messages = prompt.format_messages(user_prompt=user_prompt)
         response = llm.invoke(messages)
+        record_token_usage(response)
         coder_output = _parse_coder_output(response.content)
     except Exception as exc:
         logger.error(f"Coder LLM 调用或解析失败：{exc}")
@@ -161,6 +216,18 @@ def apply_approved_plan(
                 success=False,
                 error_message=f"Coder 试图修改计划外文件：{edit.path}",
             )
+
+    planned_tests = _planned_test_paths(plan)
+    edited_paths = {_normalize_repo_path(edit.path) for edit in coder_output.edits}
+    edited_tests = {path for path in edited_paths if _is_test_path(path)}
+    if planned_tests and not edited_tests and not coder_output.test_note:
+        return CoderApplyResult(
+            success=False,
+            error_message=(
+                "计划要求新增或更新测试文件，但 Coder 未返回测试文件修改，"
+                "也没有在 test_note 说明原因"
+            ),
+        )
 
     applied: list[dict] = []
     edited_paths: list[str] = []

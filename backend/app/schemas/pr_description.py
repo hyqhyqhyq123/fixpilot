@@ -14,6 +14,11 @@ class PRDescription(BaseModel):
     """
     title: str = Field(description="PR 标题，简洁描述改了什么")
 
+    commit_message: str = Field(
+        default="",
+        description="Git commit message，使用 conventional commits 风格",
+    )
+
     summary: str = Field(description="## Summary 部分，说明为什么做这次修改")
 
     changes: str = Field(description="## Changes 部分，列举具体改了什么")

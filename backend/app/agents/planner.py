@@ -16,6 +16,7 @@ import json
 import logging
 import re
 
+from app.core.llm_trace import record_token_usage
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -23,6 +24,10 @@ from app.core.config import get_settings
 from app.schemas.plan import FixPlan, PlannedFileChange
 from app.schemas.code_retrieval import CodeRetrievalResult
 from app.schemas.issue_analysis import IssueAnalysisResult
+from app.services.prompt_injection_guard import (
+    format_prompt_injection_warning,
+    sanitize_retrieved_snippet,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +45,7 @@ SYSTEM_PROMPT = """你是 FixPilot 系统的 Planner Agent，专门根据 issue 
 - 计划必须具体到文件级别，不能模糊地说"修改相关代码"
 - 必须解释为什么改每个文件
 - 修改范围要最小化：只改必要的文件
+- 对 bug fix，如果仓库已有测试目录，应把新增或更新测试写进 files_to_add / files_to_modify
 
 输出要求：
 你必须只输出一个合法的 JSON 对象，不要有任何其他文字，格式如下：
@@ -104,19 +110,39 @@ def _build_context_section(
         sections.append(f"- 风险等级：{issue_analysis.get('risk_level', '未知')}")
 
     # ── 仓库基本信息 ──
+    # project_info 来自 analyze_repo_node（ProjectInfo.model_dump()），
+    # 字段名与旧版 repo_analysis 不同，需兼容两种结构。
     if repo_analysis:
         sections.append("\n## 仓库信息")
-        sections.append(
-            f"- 检测语言：{', '.join(repo_analysis.get('languages', []))}"
+
+        primary_lang = repo_analysis.get("primary_language")
+        if not primary_lang:
+            langs = repo_analysis.get("languages", [])
+            primary_lang = ", ".join(langs) if langs else "未知"
+        sections.append(f"- 主要语言：{primary_lang}")
+
+        raw_types = repo_analysis.get("project_types", [])
+        type_labels: list[str] = []
+        for item in raw_types:
+            if isinstance(item, dict):
+                type_labels.append(item.get("project_type") or item.get("language") or "")
+            else:
+                type_labels.append(str(item))
+        sections.append(f"- 项目类型：{', '.join(t for t in type_labels if t) or '未知'}")
+
+        frameworks = repo_analysis.get("frameworks", [])
+        if frameworks:
+            sections.append(f"- 框架：{', '.join(frameworks)}")
+
+        test_cmd = (
+            repo_analysis.get("test_command")
+            or repo_analysis.get("detected_test_command")
+            or ""
         )
-        sections.append(
-            f"- 项目类型：{', '.join(repo_analysis.get('project_types', []))}"
-        )
-        test_cmd = repo_analysis.get("detected_test_command", "")
         if test_cmd:
             sections.append(f"- 测试命令：{test_cmd}")
         # 文件结构摘要（只取前 50 行，避免太长）
-        tree = repo_analysis.get("file_tree", "")
+        tree = repo_analysis.get("file_tree") or repo_analysis.get("file_tree_summary", "")
         if tree:
             tree_lines = tree.split("\n")[:50]
             sections.append("- 目录结构（部分）：")
@@ -125,6 +151,26 @@ def _build_context_section(
             sections.append("```")
 
     # ── 检索到的相关代码 ──
+    if retrieved_result:
+        quality = retrieved_result.get("retrieval_quality")
+        if quality:
+            sections.append("\n## 检索质量评估")
+            sections.append(f"- 置信等级：{quality.get('level', 'unknown')}")
+            sections.append(f"- 是否足够支撑计划：{quality.get('sufficient', False)}")
+            sections.append(f"- 证据片段数：{quality.get('evidence_count', 0)}")
+            sections.append(f"- 唯一文件数：{quality.get('unique_file_count', 0)}")
+            sections.append(f"- 最高分：{quality.get('top_score', 0)}")
+            reasons = quality.get("reasons") or []
+            if reasons:
+                sections.append("- 原因：")
+                for reason in reasons:
+                    sections.append(f"  * {reason}")
+            if not quality.get("sufficient", False):
+                sections.append(
+                    "- 规划要求：如果证据不足，必须在风险分析里说明不确定性，"
+                    "不要编造未检索到的文件或函数。"
+                )
+
     if retrieved_result and retrieved_result.get("retrieved_files"):
         sections.append("\n## 检索到的相关代码文件")
         files = retrieved_result["retrieved_files"]
@@ -136,9 +182,16 @@ def _build_context_section(
             sections.append(f"命中关键词：{', '.join(f.get('matched_keywords', []))}")
             snippet = f.get("snippet", "")
             if snippet:
+                sanitized_snippet, injection_findings = sanitize_retrieved_snippet(snippet)
+                warning = format_prompt_injection_warning(
+                    f.get("file_path", ""),
+                    injection_findings,
+                )
+                if warning:
+                    sections.append(warning)
                 sections.append("```")
                 # 限制每个片段最多 40 行，避免 prompt 过长
-                snippet_lines = snippet.split("\n")[:40]
+                snippet_lines = sanitized_snippet.split("\n")[:40]
                 sections.append("\n".join(snippet_lines))
                 sections.append("```")
 
@@ -209,6 +262,134 @@ def _parse_planner_output(raw_content: str) -> FixPlan:
         raise ValueError(f"FixPlan 字段结构不符合预期：{e}\n原始数据：{data}")
 
 
+TEST_DIR_NAMES = {"tests", "test", "__tests__", "spec"}
+
+
+def _normalize_repo_path(path: str) -> str:
+    return path.replace("\\", "/").strip("/")
+
+
+def _is_test_path(path: str) -> bool:
+    """判断一个仓库相对路径是否像测试文件或测试目录。"""
+
+    normalized = _normalize_repo_path(path)
+    parts = normalized.split("/")
+    if any(part in TEST_DIR_NAMES for part in parts):
+        return True
+
+    filename = parts[-1] if parts else normalized
+    return bool(
+        filename.startswith("test_")
+        or filename.endswith("_test.py")
+        or ".test." in filename
+        or ".spec." in filename
+        or filename.endswith("_test.go")
+    )
+
+
+def _plan_has_test_change(plan: FixPlan) -> bool:
+    for item in [*plan.files_to_modify, *plan.files_to_add]:
+        if _is_test_path(item.path):
+            return True
+    return False
+
+
+def _pick_test_directory(repo_analysis: dict | None) -> str | None:
+    """优先使用结构化测试目录；兼容旧 state 中只有文件树文本的情况。"""
+
+    if not repo_analysis:
+        return None
+
+    dirs = repo_analysis.get("test_directories") or []
+    if dirs:
+        return _normalize_repo_path(str(dirs[0]))
+
+    tree = repo_analysis.get("file_tree") or repo_analysis.get("file_tree_summary") or ""
+    for dirname in TEST_DIR_NAMES:
+        if re.search(rf"(^|\n).*\b{re.escape(dirname)}/", tree):
+            return dirname
+    return None
+
+
+def _guess_test_file_path(plan: FixPlan, repo_analysis: dict | None) -> str | None:
+    """按常见项目风格推断一个回归测试文件路径。"""
+
+    test_dir = _pick_test_directory(repo_analysis)
+    if not test_dir:
+        return None
+
+    source_path = ""
+    for item in plan.files_to_modify:
+        if not _is_test_path(item.path):
+            source_path = _normalize_repo_path(item.path)
+            break
+
+    filename = source_path.rsplit("/", 1)[-1] if source_path else "fixpilot_regression.py"
+    stem = filename.rsplit(".", 1)[0] or "fixpilot_regression"
+    primary_type = str((repo_analysis or {}).get("primary_type") or "").lower()
+
+    if source_path.endswith(".ts") or source_path.endswith(".tsx"):
+        return f"{test_dir}/{stem}.test.ts"
+    if source_path.endswith(".js") or source_path.endswith(".jsx") or primary_type == "nodejs":
+        return f"{test_dir}/{stem}.test.js"
+    if source_path.endswith(".go") or primary_type == "go":
+        return f"{test_dir}/{stem}_test.go"
+    if source_path.endswith(".rs") or primary_type == "rust":
+        return f"{test_dir}/{stem}_test.rs"
+    if source_path.endswith(".java") or "java" in primary_type:
+        return f"{test_dir}/{stem}Test.java"
+    return f"{test_dir}/test_{stem}.py"
+
+
+def _ensure_regression_test_in_plan(
+    plan: FixPlan,
+    issue_analysis: dict | None,
+    repo_analysis: dict | None,
+) -> FixPlan:
+    """
+    FR-503 的确定性兜底：bug fix 且仓库有测试目录时，计划里必须出现测试文件。
+
+    LLM 有时会把“补测试”写进自然语言测试计划，却忘记把测试文件放进
+    files_to_add / files_to_modify。这里做一个很小的后处理，让 Coder 的白名单
+    真正包含测试文件，避免后续因白名单限制而无法补测试。
+    """
+
+    if (issue_analysis or {}).get("issue_type") != "bug":
+        return plan
+    if _plan_has_test_change(plan):
+        return plan
+
+    test_path = _guess_test_file_path(plan, repo_analysis)
+    if not test_path:
+        return plan
+
+    test_change = PlannedFileChange(
+        path=test_path,
+        reason="为 bug fix 增加回归测试，防止相同问题再次出现",
+        planned_changes=[
+            "覆盖 issue 描述中的失败场景",
+            "断言修复后的期望行为",
+        ],
+        is_new_file=True,
+    )
+    test_plan = list(plan.test_plan)
+    test_command = (
+        (repo_analysis or {}).get("test_command")
+        or (repo_analysis or {}).get("detected_test_command")
+        or "项目测试命令"
+    )
+    test_step = f"运行 {test_command}，确认新增回归测试和现有测试通过"
+    if not any("回归测试" in item for item in test_plan):
+        test_plan.append(test_step)
+
+    return plan.model_copy(
+        update={
+            "files_to_add": [*plan.files_to_add, test_change],
+            "test_plan": test_plan,
+        }
+    )
+
+
 def generate_fix_plan(
     issue_text: str,
     issue_analysis: dict | None = None,
@@ -266,10 +447,12 @@ def generate_fix_plan(
     try:
         messages = prompt.format_messages(user_prompt=user_prompt)
         response = llm.invoke(messages)
+        record_token_usage(response)
         raw_content = response.content
         logger.debug(f"Planner LLM 原始输出：{raw_content[:300]}")
 
         plan = _parse_planner_output(raw_content)
+        plan = _ensure_regression_test_in_plan(plan, issue_analysis, repo_analysis)
 
         logger.info(
             f"修改计划生成完成："

@@ -71,6 +71,9 @@ class FixPilotState(TypedDict, total=False):
     retrieved_context: List[Dict[str, Any]]
     # 检索到的代码片段列表，每项含 file_path / line_start / snippet / score
 
+    retrieval_quality: Dict[str, Any]
+    # 检索质量摘要：是否有足够证据支撑 Planner 生成计划
+
     # ── Planner + 人工审批 ─────────────────────────────────────
     # 谁写入：planning_node 写 plan；approve/reject API 写 approval_*
     plan: Optional[Dict[str, Any]]
@@ -81,6 +84,9 @@ class FixPilotState(TypedDict, total=False):
     # 审批状态：pending（等待）/ approved（批准）/ rejected（拒绝）/ cancelled（取消）
     # approve_plan() / reject_plan() 在用户操作后写入
 
+    pending_approval_type: Optional[str]
+    # plan = 等待计划审批；diff_review = 等待高风险 diff 复核
+
     user_feedback: Optional[str]
     # 用户拒绝计划时的原因；planning_node 重新规划时会读这个字段
 
@@ -88,24 +94,27 @@ class FixPilotState(TypedDict, total=False):
     # 审批通过后允许 Coder 修改的文件白名单（从 plan 提取）
     # Phase 3 Coder 只能改这里列出的路径，防止改飞
 
-    # ── Coder 产出（Phase 3 待接入）────────────────────────────
+    # ── Coder 产出（Phase 3）────────────────────────────
     edit_history: List[Dict[str, Any]]  # 每次编辑的记录，写入 edit_history 表
     current_diff: Optional[str]          # 当前 git diff 文本，Reviewer 会读
+    test_note: Optional[str]             # Coder 未补测试时的原因说明（FR-503）
 
-    # ── Tester 产出（Phase 3 待接入）────────────────────────────
+    # ── Tester 产出（Phase 3）────────────────────────────
     # 谁写入：analyze_repo_node 可自动检测；用户创建任务时也可手动指定
     test_command: Optional[str]       # 测试命令，如 pytest
     lint_command: Optional[str]       # lint 命令，如 ruff check .
     typecheck_command: Optional[str]  # 类型检查命令，如 mypy .
     test_results: List[Dict[str, Any]]  # Docker 测试每次运行的结构化结果
 
-    # ── Failure Diagnosis + 重试（Phase 4 待接入）──────────────
+    # ── Failure Diagnosis + 重试（Phase 4）──────────────
     failure_analysis: Optional[Dict[str, Any]]  # 测试失败原因分析
+    retry_decision: Optional[str]  # retry | stop，retry_decision_node 写入
     retry_count: int      # 当前已重试次数，retry_decision_node 维护
     max_retries: int      # 最大重试上限，默认 2，来自 fix_tasks 表
 
-    # ── Reviewer + PR Writer 产出（Phase 4 待接入）─────────────
+    # ── Reviewer + PR Writer 产出（Phase 4）─────────────
     review_result: Optional[Dict[str, Any]]  # 代码审查结论、风险分级
+    review_decision: Optional[str]  # proceed | high_risk
     pr_draft: Optional[str]                  # PR 标题 + 描述 Markdown 草稿
 
     # ── 最终结果 ─────────────────────────────────────────────

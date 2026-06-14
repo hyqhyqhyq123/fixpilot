@@ -1,4 +1,14 @@
 # 测试用，可以在 Python 交互环境或脚本中运行
+import sys
+
+if "pytest" in sys.modules:
+    import pytest
+
+    pytest.skip(
+        "这是会访问 GitHub 网络的手动 clone 冒烟脚本，默认 pytest 门禁跳过。",
+        allow_module_level=True,
+    )
+
 from app.tools.repo_clone_tool import clone_repo, validate_repo_url
 from app.tools.repo_analysis_tool import list_files, get_file_tree_text
 

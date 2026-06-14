@@ -5,8 +5,15 @@
 # 最终修改完成后，让另一个"角色"来审查 diff，
 # 检查是否有越权修改、危险代码、安全问题，作为最后一道质量把关。
 
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field
+
+
+class ReviewIssue(BaseModel):
+    """单条审查问题（对齐 FR-802 issues 数组）。"""
+    type: str = Field(description="问题类型，如 scope_creep / dangerous_code")
+    message: str = Field(description="问题描述")
+    file: Optional[str] = Field(default=None, description="相关文件路径")
 
 
 class ReviewResult(BaseModel):
@@ -23,6 +30,11 @@ class ReviewResult(BaseModel):
     review_comments: List[str] = Field(
         default=[],
         description="审查意见列表，每条是一个具体的发现或建议",
+    )
+
+    issues: List[ReviewIssue] = Field(
+        default_factory=list,
+        description="结构化问题列表（FR-802）",
     )
 
     has_unauthorized_changes: bool = Field(

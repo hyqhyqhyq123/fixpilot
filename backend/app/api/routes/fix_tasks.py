@@ -26,6 +26,7 @@ from app.schemas.fix_task import (
     FixTaskListResponse,
     FixTaskResponse,
 )
+from app.services import workflow_runner
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +188,15 @@ async def cancel_task(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"任务状态为 {task.status}，无法取消（只能取消 pending 或 waiting_approval 状态的任务）",
         )
+
+    # 优先走 Workflow 取消（同步 LangGraph State）
+    if task.status == TaskStatus.WAITING_APPROVAL:
+        try:
+            await workflow_runner.cancel_workflow(db, task_id)
+            logger.info(f"任务 {task_id} 已通过 Workflow 取消")
+            return
+        except ValueError:
+            pass
 
     task.status = TaskStatus.CANCELLED
     logger.info(f"任务 {task_id} 已取消")
